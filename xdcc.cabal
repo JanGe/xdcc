@@ -15,23 +15,25 @@ cabal-version:        >=1.10
 
 executable xdcc
   main-is:              Main.hs
-  -- other-modules:
+  other-modules:        Irc
+                      , Xdcc
   -- other-extensions:
   build-depends:        base >= 4.7 && < 5
-                        , ascii-progress
-                        , binary
-                        , bytestring
-                        , case-insensitive
-                        , concurrent-extra
-                        , containers
-                        , filepath
-                        , io-streams
-                        , iproute
-                        , network
-                        , optparse-applicative
-                        , polyparse
-                        , random
-                        , simpleirc
-                        , time
+                      , ascii-progress
+                      , binary
+                      , bytestring
+                      , case-insensitive
+                      , concurrent-extra
+                      , containers
+                      , filepath
+                      , io-streams
+                      , iproute
+                      , network
+                      , optparse-applicative
+                      , polyparse
+                      , random
+                      , simpleirc
+                      , text
+                      , time
   hs-source-dirs:       src
   default-language:     Haskell2010

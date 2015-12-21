@@ -1,41 +1,19 @@
-{-# LANGUAGE NamedFieldPuns    #-}
-{-# LANGUAGE OverloadedStrings #-}
+
+{-# LANGUAGE RecordWildCards #-}
 
 module Main where
 
-import           Control.Concurrent
-import           Control.Concurrent.Broadcast
-import qualified Control.Exception            as E
-import           Control.Monad
-import           Data.Binary
-import           Data.Binary.Put
-import qualified Data.ByteString.Char8        as B
-import qualified Data.ByteString.Lazy.Char8   as BL
+import           Irc
+import           Xdcc
+
+import           Control.Monad                (replicateM)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
-import           Data.IP
-import           Data.Maybe
-import           Data.Time
-import           Data.Word
-import           Debug.Trace
-import qualified Network.Socket               as S hiding (recv, recvFrom, send,
-                                                    sendTo)
-import qualified Network.Socket.ByteString    as S
-import qualified Options.Applicative          as Opts
-import           System.FilePath
-import           System.IO
-import qualified System.IO.Streams            as IOS
-import           System.Random
-import           Text.Parse.ByteString
-import           Text.Printf
+import           Data.Maybe                   (fromMaybe)
+import           Options.Applicative
+import           System.Random                (randomRIO)
 
-import           Network.SimpleIRC
 import           System.Console.AsciiProgress hiding (Options)
-
-type Network = String
-type Nickname = String
-type Channel = CI String
-type Pack = Int
 
 data Options = Options { network            :: Network
                        , mainChannel        :: Channel
@@ -43,107 +21,66 @@ data Options = Options { network            :: Network
                        , pack               :: Pack
                        , nick               :: Nickname
                        , additionalChannels :: [Channel] }
-                  deriving (Show)
+    deriving (Show)
 
-data SendOffer = SendOffer { host     :: S.HostAddress
-                           , port     :: S.PortNumber
-                           , fileName :: FilePath
-                           , fileSize :: Maybe Integer }
-                 deriving (Show)
+options :: String -> Parser Options
+options defaultNick = Options
+    <$> strArgument ( metavar "HOST"
+                    <> help "Host address of the IRC network" )
+    <*> (CI.mk <$> strArgument ( metavar "CHANNEL"
+                               <> help "Main channel to join on network" ))
+    <*> strArgument ( metavar "USER"
+                    <> help "Nickname of the user or bot to download from" )
+    <*> argument auto ( metavar "#PACK"
+                      <> help "Pack number of the file to download" )
+    <*> strOption ( long "nickname"
+                  <> short 'n'
+                  <> metavar "NAME"
+                  <> value defaultNick
+                  <> help "" )
+    <*> many (CI.mk <$> strOption ( long "join"
+                                  <> short 'j'
+                                  <> metavar "CHANNEL" ))
 
-notify :: Eq a => [(a, Broadcast ())] -> a -> IO ()
-notify broadcasts key =
-    case lookup key broadcasts of
-        Just b -> broadcast b ()
-        _ -> return ()
+main :: IO ()
+main = do defaultNick <- randomNick
+          execParser (info (helper <*> options defaultNick) (
+            fullDesc
+            <> progDesc "Download files from IRC XDCC channels"
+            <> header "xdcc - an XDCC file downloader" ))
+          >>= run
+  where randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
-onJoin :: (Channel -> IO ()) -> EventFunc
-onJoin notifyJoined connection IrcMessage { mNick, mMsg = channel } =
-    do nick <- getNickname connection
-       case mNick of
-         Just mNick | mNick == nick -> notifyJoined $ (CI.mk . B.unpack) channel
-         _ -> return ()
+run :: Options -> IO ()
+run Options {..} = do let channels = mainChannel : additionalChannels
+                      connection <- connectAndJoin network nick channels
+                      instructions <- requestFile connection remoteNick pack
+                      downloadWith instructions
+                      disconnectFrom connection
 
-onDccSendFrom :: B.ByteString -> Broadcast SendOffer -> EventFunc
-onDccSendFrom rNick dccSendBroadcast _ IrcMessage { mMsg = msg, mOrigin } =
-    case mOrigin of
-        Just origin | origin == rNick
-                      && "\SOHDCC SEND " `B.isPrefixOf` msg
-                         -> case parseSendOffer msg of
-                              Left e -> ioError $ userError e
-                              Right offer -> broadcast dccSendBroadcast offer
-        _ -> return ()
+connectAndJoin :: Network -> Nickname -> [Channel] -> IO Connection
+connectAndJoin network nick chans =
+  do putStr $ "Connecting to " ++ network ++ " as " ++ nick ++ "... "
+     putStr $ "Joining channels " ++ show chans ++ "... "
+     connectTo network nick chans (
+       putStrLn "connected.") (
+       putStrLn "joined.")
 
-parseSendOffer :: B.ByteString -> Either String SendOffer
-parseSendOffer msg = case result of
-        (Left error, unconsumed) -> Left ("Encountered error: " ++ error ++
-                                          " when parsing: " ++ BL.unpack unconsumed)
-        (Right offer, _) -> Right offer
-    where parser = do literal "\SOHDCC SEND "
-                      fileName <- many1Satisfy (/= ' ')
-                      literal " "
-                      ip <- parseUnsignedInteger
-                      literal " "
-                      port <- parseUnsignedInteger
-                      fileSize <- fmap Just (do literal " "
-                                                parseUnsignedInteger)
-                                             `onFail` return Nothing
-                      return SendOffer {
-                          host = byteSwap32 $ fromIntegral ip,
-                          port = fromInteger port,
-                          fileName = takeFileName $ BL.unpack fileName,
-                          fileSize = fileSize
-                      }
-          result = runParser parser $ BL.fromStrict msg
-
-config :: Network -> Nickname -> [(Channel, Broadcast ())] -> IrcConfig
-config network name allChannelsJoined =
-    let notifyJoined = notify allChannelsJoined in
-        (mkDefaultConfig network name) {
-          cChannels = map (CI.original . fst) allChannelsJoined,
-          cEvents   = [ Join $ onJoin notifyJoined ]
-        }
-
-connectAndJoin :: Network -> Nickname -> [Channel] -> IO MIrc
-connectAndJoin network name chans =
-        do channelsJoinedEvents <- replicateM (length chans) new
-           let allChannelsJoined = zip chans channelsJoinedEvents
-           putStr $ "Connecting to " ++ network ++ "... "
-           let config' = config network name allChannelsJoined
-           connected <- connect config' True False
-           putStrLn "connected."
-           connection <- fromRight connected
-           putStr $ "Joining channels " ++ show chans ++ "... "
-           let events = map snd allChannelsJoined
-           mapM_ listen events
-           putStrLn "joined."
-           return connection
-
-requestFile :: MIrc -> Nickname -> Pack -> IO SendOffer
+requestFile :: Connection -> Nickname -> Pack -> IO Instructions
 requestFile connection remoteNick pack =
-  let rNick = B.pack remoteNick in
-  do receivedSendOffer <- new
-     changeEvents connection [ Privmsg $ onDccSendFrom rNick receivedSendOffer ]
-     let sendMessage = MPrivmsg rNick $ B.pack $ "xdcc send #" ++ show pack
-     sendCmd connection sendMessage
-     putStr $ "" ++ show sendMessage ++ " sent, awaiting instructions... "
-     sendOffer <- listen receivedSendOffer
-     putStrLn $ "received instructions for file " ++ show (fileName sendOffer)
-     return sendOffer
+  do putStr $ "Requesting pack #" ++ show pack
+     putStr $ " from "  ++ remoteNick ++ ", awaiting instructions... "
+     sendFileRequest connection remoteNick pack (\instructions ->
+      putStrLn $ "received instructions for file " ++ fileName instructions)
 
-download :: SendOffer -> IOS.OutputStream B.ByteString -> IO ()
-download SendOffer { host, port, fileName, fileSize } file =
-  displayConsoleRegions . S.withSocketsDo $
-    do ip <- S.inet_ntoa host
-       putStr $ "Connecting to " ++ ip ++ ":" ++ show port ++ "... "
-       sock <- S.socket S.AF_INET S.Stream S.defaultProtocol
-       S.connect sock $ S.SockAddrInet port host
-       putStrLn "connected."
+downloadWith :: Instructions -> IO ()
+downloadWith instructions@Instructions {..} =
+  displayConsoleRegions $
+    do putStr $ "Connecting to " ++ show host ++ ":" ++ show port ++ "... "
        progressBar <- newDownloadBar fileSize fileName
-       downloadToFile sock file progressBar 0
-       S.sClose sock
+       acceptFile instructions (putStrLn "connected.") (tickN progressBar)
 
-
+newDownloadBar :: Maybe Integer -> String -> IO ProgressBar
 newDownloadBar fileSize fileName =
       newProgressBar def { pgTotal = fromMaybe 1 fileSize
                          , pgWidth = 100
@@ -152,71 +89,6 @@ newDownloadBar fileSize fileName =
   where barFormat = cap 30 fileName ++ " [:bar] :percent (:current/:total)"
 
 cap :: Int -> String -> String
-cap maxLength string | length string > maxLength
-                       = take (maxLength - 3) string ++ "..."
-cap _ string           = string
-
-downloadToFile :: S.Socket -> IOS.OutputStream B.ByteString -> ProgressBar -> Int -> IO ()
-downloadToFile sock file progressBar size =
-   do buffer <- S.recv sock $ 4096 * 1024
-      let received = B.length buffer
-      let receivedTotal = size + received
-      if B.null buffer
-          then do complete progressBar
-                  return ()
-          else do tickN progressBar received
-                  sendNumReceived sock receivedTotal
-                  Just buffer `IOS.write` file
-                  downloadToFile sock file progressBar receivedTotal
-
-toNetworkByteOrder :: Int -> B.ByteString
-toNetworkByteOrder = BL.toStrict . runPut . putWord32be . fromIntegral
-
-sendNumReceived :: S.Socket -> Int -> IO ()
-sendNumReceived sock num = S.sendAll sock (toNetworkByteOrder num)
-
-fromRight :: Either IOError a -> IO a
-fromRight (Left e) = ioError e
-fromRight (Right v) = return v
-
-run :: Options -> IO ()
-run (Options network mainChan remoteNick pack nick moreChans) =
-    do connection <- connectAndJoin network nick $ mainChan : moreChans
-       sendOffer <- requestFile connection remoteNick pack
-       IOS.withFileAsOutput (fileName sendOffer) $ download sendOffer
-      --  let cancelMessage = MPrivmsg (B.pack remoteNick) "xdcc cancel"
-      --  B.putStrLn $ showCommand cancelMessage
-      --  sendCmd connection cancelMessage
-       disconnect connection "bye"
-
-randomNick :: IO Nickname
-randomNick = replicateM 10 randomChar
-    where randomChar = randomRIO ('a', 'z')
-
-options :: String -> Opts.Parser Options
-options defaultNick = Options
-    <$> Opts.strArgument ( Opts.metavar "HOST"
-                         Opts.<> Opts.help "Host address of the IRC network" )
-    <*> fmap CI.mk (Opts.strArgument ( Opts.metavar "CHANNEL"
-                                     Opts.<> Opts.help "Main channel to join on network" ))
-    <*> Opts.strArgument ( Opts.metavar "USER"
-                         Opts.<> Opts.help "Nickname of the user or bot to download from" )
-    <*> Opts.argument Opts.auto ( Opts.metavar "#PACK"
-                         Opts.<> Opts.help "Pack number of the file to download" )
-    <*> Opts.strOption ( Opts.long "nickname"
-                       Opts.<> Opts.short 'n'
-                       Opts.<> Opts.metavar "NAME"
-                       Opts.<> Opts.value defaultNick
-                       Opts.<> Opts.help "")
-    <*> Opts.many (fmap CI.mk (Opts.strOption ( Opts.long "join"
-                                              Opts.<> Opts.short 'j'
-                                              Opts.<> Opts.metavar "CHANNEL" )))
-
-main :: IO ()
-main = do defaultNick <- randomNick
-          Opts.execParser (
-              Opts.info (Opts.helper <*> options defaultNick) (
-                  Opts.fullDesc
-                  Opts.<> Opts.progDesc "Download files from IRC XDCC channels"
-                  Opts.<> Opts.header "xdcc - an XDCC file downloader" ))
-          >>= run
+cap maxLength string | length string > maxLength && maxLength > 1
+                       = take (maxLength - 1) string ++ "…"
+cap _         string   = string
