@@ -42,12 +42,13 @@ connectTo network nick chans onConnected onJoined =
   do channelsJoinedEvents <- replicateM (length chans) new
      let allChannelsJoined = zip chans channelsJoinedEvents
      let config' = config network nick allChannelsJoined
-     connected <- connect config' True False
+     connected <- connect config' True withDebug
      connection <- fromRight connected
      onConnected
      mapM_ listen $ snd <$> allChannelsJoined
      onJoined
      return connection
+  where withDebug = False
 
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"
