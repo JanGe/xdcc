@@ -2,7 +2,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards   #-}
 
-module Xdcc (Parameters(..), acceptFile, sendFileRequest) where
+module Xdcc (Parameters(..), acceptFile, sendFileRequest, isResumable,
+  resumeFile) where
 
 import           Irc
 
@@ -12,17 +13,22 @@ import           Control.Monad                (unless)
 import           Data.Binary                  (byteSwap32)
 import           Data.Binary.Put              (putWord32be, runPut)
 import           Data.ByteString.Builder
-import           Data.ByteString.Char8
+import           Data.ByteString.Char8        hiding (putStrLn)
 import qualified Data.ByteString.Lazy.Char8   as Lazy
 import           Data.Monoid                  ((<>))
+import           GHC.IO.Handle                (BufferMode (NoBuffering))
 import           Network.Socket               hiding (recv, recvFrom, send,
                                                sendTo)
 import           Network.Socket.ByteString
 import           Prelude                      hiding (and, length, null,
                                                splitAt)
 import           System.FilePath              (takeFileName)
+import           System.IO                    (IOMode (AppendMode))
 import           System.IO.Streams            (OutputStream, withFileAsOutput,
-                                               write)
+                                               withFileAsOutputExt, write)
+import           System.Posix.Files           (FileStatus, fileExist,
+                                               getFileStatus, isRegularFile)
+import qualified System.Posix.Files           as Files (fileSize)
 import           System.Timeout
 import           Text.Parse.ByteString        (literal, many1Satisfy, onFail,
                                                parseUnsignedInteger, runParser)
@@ -40,12 +46,19 @@ data Parameters = DccSend { host     :: HostAddress
                              , host       :: HostAddress
                              , fileName   :: FilePath
                              , fileSize   :: Integer
-                             , token      :: ByteString }
+                             , token      :: ByteString } |
+                  DccSendResume { host     :: HostAddress
+                                , port     :: PortNumber
+                                , fileName :: FilePath
+                                , fileSize :: Integer
+                                , position :: Integer }
     deriving (Show)
 
 type File = OutputStream ByteString
 
 dccSendPrefix = "\SOHDCC SEND "
+dccResumePrefix = "\SOHDCC RESUME "
+dccAcceptPrefix = "\SOHDCC ACCEPT "
 dccSuffix = "\SOH"
 
 sendFileRequest :: Connection -> HostAddress -> Nickname -> Pack ->
@@ -53,14 +66,37 @@ sendFileRequest :: Connection -> HostAddress -> Nickname -> Pack ->
                    -> IO Parameters
 sendFileRequest connection publicIp remoteNick num onReceive =
     do receivedInstructions <- Broadcast.new
-       changeEvents connection [
-           Privmsg $ onDccSendFrom rNick publicIp receivedInstructions ]
-       sendCmd connection sendMessage
+       changeEvents connection (
+           Privmsg (onDccSendFrom rNick publicIp receivedInstructions)
+           : defaultEvents)
+       sendMsgTo connection remoteNick message
        instructions <- Broadcast.listen receivedInstructions
        onReceive instructions
        return instructions
   where rNick = pack remoteNick
-        sendMessage = MPrivmsg rNick $ "xdcc send #" `append` pack (show num)
+        message = "xdcc send #" `append` pack (show num)
+
+sendResumeRequest :: Connection -> Integer -> Nickname -> Parameters
+                     -> IO Parameters
+sendResumeRequest connection position remoteNick DccSend{..} =
+    do receivedInstructions <- Broadcast.new
+       changeEvents connection (
+           Privmsg (onDccAcceptFrom rNick receivedInstructions)
+           : defaultEvents)
+       sendCmd connection resumeCmd
+       pos <- Broadcast.listen receivedInstructions
+       return DccSendResume { host = host
+                            , port = port
+                            , fileName = fileName
+                            , fileSize = fileSize
+                            , position = pos
+                            }
+  where rNick = pack remoteNick
+        resumeCmd = MPrivmsg rNick $ dccResumePrefix <> pack (
+                                                    fileName ++ " " ++
+                                                    show port ++ " " ++
+                                                    show position)
+                                                    <> dccSuffix
 
 acceptFile :: Connection -> Parameters -> (Int -> IO ())  -> IO ()
 acceptFile _ DccSend {..} onPacket =
@@ -92,6 +128,26 @@ acceptFile connection ReverseDcc {..} onPacket =
            _ -> return ()
          sClose sock)
 
+isResumable :: Connection -> Nickname -> Parameters -> IO Parameters
+isResumable connection remoteNick instructions@DccSend {..} =
+  do exists <- fileExist fileName
+     if exists then
+       do stats <- getFileStatus fileName
+          let curSize = fromIntegral $ Files.fileSize stats
+          if isRegularFile stats && curSize < fileSize
+             then do putStrLn "Found file..."
+                     sendResumeRequest connection curSize remoteNick instructions
+             else return instructions
+     else return instructions
+
+resumeFile :: Connection -> Parameters -> (Int -> IO ())  -> IO ()
+resumeFile _ DccSendResume {..} onPacket =
+ withFileAsOutputExt fileName AppendMode NoBuffering (\file -> withSocketsDo $
+     do sock <- socket AF_INET Stream defaultProtocol
+        connect sock $ SockAddrInet port host
+        downloadToFile sock file onPacket $ fromInteger position
+        sClose sock)
+
 downloadToFile :: Socket -> File -> (Int -> IO ()) -> Int -> IO ()
 downloadToFile sock file onPacket size =
   do buffer <- recv sock $ 4096 * 1024
@@ -117,6 +173,28 @@ onDccSendFrom rNick publicIp instructionsReceived _ ircMessage =
          Right instructions -> broadcast instructionsReceived instructions)
       ircMessage
   where (_, parameters) = splitAt (length dccSendPrefix) $ mMsg ircMessage
+
+onDccAcceptFrom :: ByteString -> Broadcast Integer -> EventFunc
+onDccAcceptFrom rNick instructionsReceived _ ircMessage =
+    onMessageDo (from rNick `and` msgHasPrefix dccAcceptPrefix) (\_ ->
+        case parseAcceptMsg parameters of
+           Left e -> ioError $ userError e
+           Right position -> broadcast instructionsReceived position)
+        ircMessage
+    where (_, parameters) = splitAt (length dccAcceptPrefix) $ mMsg ircMessage
+
+parseAcceptMsg :: ByteString -> Either String Integer
+parseAcceptMsg msg = case result of
+        (Left error, unconsumed) ->
+             Left ("Encountered error: " ++ error ++
+                   " when parsing: " ++ Lazy.unpack unconsumed)
+        (Right offer, _) -> Right offer
+    where result = runParser parser $ Lazy.fromStrict msg
+          parser = do _ <- many1Satisfy (/= ' ')
+                      literal " "
+                      _ <- parseUnsignedInteger
+                      literal " "
+                      parseUnsignedInteger
 
 parseInstructions :: ByteString -> HostAddress -> ByteString
                      -> Either String Parameters

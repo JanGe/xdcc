@@ -15,8 +15,7 @@ import           Network.Socket               (HostAddress, HostName,
                                                addrAddress, getAddrInfo,
                                                inet_ntoa)
 import           Options.Applicative
-import           System.IO                    (BufferMode (NoBuffering),
-                                               hSetBuffering, stdout)
+import           System.IO                    (hFlush, stdout)
 import           System.Random                (randomRIO)
 
 import           System.Console.AsciiProgress hiding (Options)
@@ -64,16 +63,19 @@ main = do defaultNick <- randomNick
   where randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
 run :: Options -> IO ()
-run Options {..} = do hSetBuffering stdout NoBuffering
-                      let channels = mainChannel : additionalChannels
+run Options {..} = do let channels = mainChannel : additionalChannels
                       connection <- connectAndJoin network nick channels
                       instructions <- requestFile connection publicIp remoteNick pack
-                      downloadWith connection instructions
+                      resume <- isResumable connection remoteNick instructions
+                      case resume of
+                        DccSendResume {} -> resumeWith connection resume
+                        instrucions -> downloadWith connection instructions
                       disconnectFrom connection
 
 connectAndJoin :: Network -> Nickname -> [Channel] -> IO Connection
 connectAndJoin network nick chans =
   do putStr $ "Connecting to " ++ network ++ " as " ++ nick ++ "… "
+     hFlush stdout
      connectTo network nick chans (
        putStrLn "Connected.") (
        putStrLn $ "Joined " ++ show chans ++ ".")
@@ -99,6 +101,18 @@ downloadWith connection parameters@ReverseDcc {..} = displayConsoleRegions $
      putStrLn $ "Awaiting connection from " ++ ip ++ "…"
      progressBar <- newDownloadBar fileSize fileName
      acceptFile connection parameters (tickN progressBar)
+
+resumeWith :: Connection -> Parameters -> IO ()
+resumeWith connection parameters@DccSendResume {..} = displayConsoleRegions $
+ do ip <- inet_ntoa host
+    putStrLn $ "Connecting to " ++ ip ++ ":" ++ show port ++ "…"
+    putStrLn $ "Resuming file at " ++ show position ++ "…"
+    progressBar <- newDownloadBar fileSize fileName
+    tickN progressBar $ fromInteger position
+    resumeFile connection parameters (tickN progressBar)
+resumeWith _ _ =
+  do putStrLn "Resuming with Reverse DCC is not supported yet."
+     return ()
 
 newDownloadBar :: Integer -> String -> IO ProgressBar
 newDownloadBar fileSize fileName =

@@ -11,7 +11,9 @@ module Irc ( Connection
            , onMessageDo
            , from
            , and
-           , msgHasPrefix) where
+           , msgHasPrefix
+           , defaultEvents
+           , sendMsgTo) where
 
 import           Control.Concurrent
 import           Control.Concurrent.Broadcast
@@ -19,7 +21,8 @@ import           Control.Monad
 import           Data.ByteString.Char8        hiding (length, map, zip)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
-import           Prelude                      hiding (and)
+import           Data.Monoid
+import           Prelude                      hiding (and, putStrLn)
 
 import           Network.SimpleIRC
 
@@ -30,10 +33,16 @@ type Pack = Int
 
 type Connection = MIrc
 
+defaultEvents = [
+                --   Notice logMsg
+                -- , Privmsg logMsg
+                ]
+
 config :: Network -> Nickname -> [(Channel, Broadcast ())] -> IrcConfig
 config network name allChannelsJoined = (mkDefaultConfig network name) {
           cChannels = map (CI.original . fst) allChannelsJoined,
-          cEvents   = map (\(channel, broadcast) ->
+          cEvents   = defaultEvents ++
+                      map (\(channel, broadcast) ->
                               Join $ onJoin channel broadcast) allChannelsJoined
         }
 
@@ -53,11 +62,19 @@ connectTo network nick chans onConnected onJoined =
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"
 
+sendMsgTo :: Connection -> Nickname -> ByteString -> IO ()
+sendMsgTo connection remoteNick message = sendCmd connection msg
+  where recipient = pack remoteNick
+        msg = MPrivmsg recipient message
+
 onJoin :: Channel -> Broadcast () -> EventFunc
 onJoin channel notifyJoined connection ircMessage =
   do curNick <- getNickname connection
      onMessageDo (for curNick `and` msgEqCi channel) (\_ ->
             broadcast notifyJoined ()) ircMessage
+
+logMsg :: EventFunc
+logMsg connection IrcMessage { mRaw } = putStrLn $ "<- " <> mRaw
 
 onMessageDo :: (a -> Bool) -> (a -> IO ()) -> a -> IO ()
 onMessageDo predicate f x = when (predicate x) $ f x
