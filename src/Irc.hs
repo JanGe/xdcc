@@ -12,17 +12,21 @@ module Irc ( Connection
            , from
            , and
            , msgHasPrefix
-           , defaultEvents
-           , sendMsgTo) where
+           , logMsg
+           , sendMsgTo
+           ) where
 
 import           Control.Concurrent
 import           Control.Concurrent.Broadcast
+import           Control.Error
 import           Control.Monad
+import           Control.Monad.Trans.Class    (lift)
 import           Data.ByteString.Char8        hiding (length, map, zip)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
 import           Data.Monoid
 import           Prelude                      hiding (and, putStrLn)
+import           System.IO.Error              (ioeGetErrorString)
 
 import           Network.SimpleIRC
 
@@ -33,31 +37,26 @@ type Pack = Int
 
 type Connection = MIrc
 
-defaultEvents = [
-                --   Notice logMsg
-                -- , Privmsg logMsg
-                ]
-
 config :: Network -> Nickname -> [(Channel, Broadcast ())] -> IrcConfig
 config network name allChannelsJoined = (mkDefaultConfig network name) {
           cChannels = map (CI.original . fst) allChannelsJoined,
-          cEvents   = defaultEvents ++
-                      map (\(channel, broadcast) ->
+          cEvents   = map (\(channel, broadcast) ->
                               Join $ onJoin channel broadcast) allChannelsJoined
         }
 
-connectTo :: Network -> Nickname -> [Channel] -> IO () -> IO () -> IO Connection
-connectTo network nick chans onConnected onJoined =
-  do channelsJoinedEvents <- replicateM (length chans) new
+connectTo :: Network -> Nickname -> [Channel] -> Bool -> IO () -> IO ()
+             -> ExceptT String IO Connection
+connectTo network nick chans withDebug onConnected onJoined =
+  do channelsJoinedEvents <- lift $ replicateM (length chans) new
      let allChannelsJoined = zip chans channelsJoinedEvents
      let config' = config network nick allChannelsJoined
-     connected <- connect config' True withDebug
-     connection <- fromRight connected
-     onConnected
-     mapM_ listen $ snd <$> allChannelsJoined
-     onJoined
+     maybeConnected <- lift $ connect config' True withDebug
+     connection <- hoistEither $ catchEither maybeConnected
+                                             (Left . ioeGetErrorString)
+     lift onConnected
+     lift $ mapM_ listen $ snd <$> allChannelsJoined
+     lift onJoined
      return connection
-  where withDebug = False
 
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"
@@ -83,8 +82,8 @@ for :: ByteString -> IrcMessage -> Bool
 for nick IrcMessage { mNick = Just recipient } = nick == recipient
 for _ _ = False
 
-from :: ByteString -> IrcMessage -> Bool
-from rNick IrcMessage { mOrigin = Just origin } = rNick == origin
+from :: Nickname -> IrcMessage -> Bool
+from rNick IrcMessage { mOrigin = Just origin } = pack rNick == origin
 from _ _ = False
 
 msgEqCi :: CI String -> IrcMessage -> Bool

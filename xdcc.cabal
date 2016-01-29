@@ -14,8 +14,12 @@ build-type:           Simple
 cabal-version:        >=1.10
 
 executable xdcc
+  hs-source-dirs:       src
   main-is:              Main.hs
   other-modules:        Irc
+                      , Dcc
+                      , Dcc.Types
+                      , Dcc.Parser
                       , Xdcc
   -- other-extensions:
   build-depends:        base >= 4.7 && < 5
@@ -25,9 +29,11 @@ executable xdcc
                       , case-insensitive
                       , concurrent-extra
                       , containers
+                      , errors
                       , filepath
                       , io-streams
                       , iproute
+                      , irc-ctcp
                       , network
                       , optparse-applicative
                       , polyparse
@@ -35,6 +41,32 @@ executable xdcc
                       , simpleirc
                       , text
                       , time
+                      , transformers
                       , unix
+  default-language:     Haskell2010
+
+test-suite xdcc-unit-tests
   hs-source-dirs:       src
+  type:                 exitcode-stdio-1.0
+  main-is:              Test.hs
+  other-modules:        Irc
+                      , Dcc
+                      , Dcc.Types
+                      , Dcc.Parser
+  build-depends:        base >= 4.7 && < 5
+                      , binary
+                      , bytestring
+                      , case-insensitive
+                      , concurrent-extra
+                      , errors
+                      , filepath
+                      , io-streams
+                      , iproute
+                      , irc-ctcp
+                      , network
+                      , polyparse
+                      , simpleirc
+                      , transformers
+                      , unix
+                      , QuickCheck
   default-language:     Haskell2010
