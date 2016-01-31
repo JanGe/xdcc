@@ -28,6 +28,7 @@ executable xdcc
                       , bytestring
                       , case-insensitive
                       , concurrent-extra
+                      , concurrent-output
                       , containers
                       , errors
                       , filepath

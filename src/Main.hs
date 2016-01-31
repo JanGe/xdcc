@@ -13,6 +13,7 @@ import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
 import           Data.IP                      (IPv4)
 import           Options.Applicative
+import           System.Console.Concurrent    (withConcurrentOutput)
 import           System.Console.AsciiProgress hiding (Options)
 import           System.IO                    (hFlush, stdout)
 import           System.Random                (randomRIO)
@@ -68,13 +69,14 @@ main = do defaultNick <- randomNick
   where randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
 runWith :: Options -> ExceptT String IO ()
-runWith Options {..} = withConnection (\connection -> do
-    let context = Context { publicIp = publicIp, remoteNick = remoteNick }
-    protocol <- request connection context pack
-    resumePos <- isResumable connection context protocol
-    case resumePos of
-      0 -> downloadWith connection context protocol
-      pos -> resumeWith connection context protocol pos)
+runWith Options {..} = withConcurrentOutput $
+    withConnection (\connection -> do
+      let context = Context { publicIp = publicIp, remoteNick = remoteNick }
+      protocol <- request connection context pack
+      resumePos <- isResumable connection context protocol
+      case resumePos of
+        0 -> downloadWith connection context protocol
+        pos -> resumeWith connection context protocol pos)
   where channels = mainChannel : additionalChannels
         withConnection = bracket (connectAndJoin network nick channels verbose)
                                  (lift . disconnectFrom)
@@ -93,7 +95,8 @@ request connection c@Context { remoteNick = rNick } pack =
   do lift $ putStrLn $ "Requesting pack #" ++ show pack ++ " from "  ++
                        rNick ++ ", awaiting instructions…"
      requestFile connection c pack (\f ->
-       putStrLn $ "Received instructions for file " ++ show f ++ ".")
+       putStrLn ( "Received instructions for file " ++ show (fileName f)
+               ++ " of size " ++ show (fileSize f) ++ "." ))
 
 downloadWith :: Connection -> Context -> Protocol -> ExceptT String IO ()
 downloadWith con c p = lift .

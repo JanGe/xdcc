@@ -22,8 +22,7 @@ import           Data.ByteString.Char8        (pack)
 import qualified Data.ByteString.Lazy.Char8   as Lazy (fromStrict)
 import           Data.Foldable                (traverse_)
 import           Data.Monoid                  ((<>))
-import           Network.IRC.CTCP             (decodeCTCP, asCTCP)
-import           Text.Parse.ByteString        (onFail, runParser)
+import           Network.IRC.CTCP             (asCTCP)
 
 import           Network.SimpleIRC            (EventFunc,
                                                IrcEvent (Privmsg, Notice),
@@ -37,23 +36,19 @@ requestFile :: Connection -> Context -> Pack ->
                (FileMetadata -> IO ())
                -> ExceptT String IO Protocol
 requestFile con c num onReceive =
-    do receivedInstructions <- lift Broadcast.new
+    do instructionsReceived <- lift Broadcast.new
        lift $ changeEvents con
-           [ Privmsg (parseInstructions (remoteNick c) receivedInstructions)
-           , Notice logMsg ]
+         [ Privmsg (onInstructionsReceived (remoteNick c) instructionsReceived)
+         , Notice logMsg ]
        lift $ sendMsgTo con (remoteNick c) message
-       instructions <- lift $ Broadcast.listenTimeout receivedInstructions 30000000
-       lift $ whenIsJust instructions (onReceive . fileMetadata)
-       failWith "Didn't receive instructions in time." instructions
+       protocol <- lift $ Broadcast.listenTimeout instructionsReceived 30000000
+       lift $ whenIsJust protocol (onReceive . fileMetadata)
+       failWith "Didn't receive instructions in time." protocol
   where message = "XDCC SEND #" <> pack (show num)
 
-parseInstructions :: Nickname -> Broadcast Protocol -> EventFunc
-parseInstructions remoteNick instructionsReceived _ =
+onInstructionsReceived :: Nickname -> Broadcast Protocol -> EventFunc
+onInstructionsReceived remoteNick instructionsReceived _ =
   onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
-      let msg = asCTCP mMsg in
-      case msg of
-        Just m -> case runParser parser (Lazy.fromStrict (decodeCTCP m)) of
-           (Right protocol, _) -> broadcast instructionsReceived protocol
-           (Left e, _) -> putStrLn e
-        Nothing -> return ())
-  where parser = offerParserDcc `onFail` offerParserReverseDcc
+      case asCTCP mMsg >>= hush . parseDccProtocol of
+         Just p -> broadcast instructionsReceived p
+         Nothing -> return ())

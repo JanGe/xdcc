@@ -73,7 +73,8 @@ onJoin channel notifyJoined connection ircMessage =
             broadcast notifyJoined ()) ircMessage
 
 logMsg :: EventFunc
-logMsg connection IrcMessage { mRaw } = putStrLn $ "<- " <> mRaw
+logMsg connection IrcMessage { mOrigin = Just origin, mCode, mMsg } =
+    putStrLn $ mCode <> " " <> origin <>": " <> mMsg
 
 onMessageDo :: (a -> Bool) -> (a -> IO ()) -> a -> IO ()
 onMessageDo predicate f x = when (predicate x) $ f x

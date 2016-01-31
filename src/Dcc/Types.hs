@@ -3,6 +3,7 @@ module Dcc.Types ( Context (..)
                  , FileMetadata (..)
                  , Token
                  , Protocol (..)
+                 , fileMetadata
                  ) where
 
 import           Irc
@@ -27,3 +28,7 @@ type Token = String
 data Protocol = Dcc FileMetadata IPv4 PortNumber
               | ReverseDcc FileMetadata IPv4 Token
               deriving (Eq, Show)
+
+fileMetadata :: Protocol -> FileMetadata
+fileMetadata (Dcc f _ _) = f
+fileMetadata (ReverseDcc f _ _) = f
