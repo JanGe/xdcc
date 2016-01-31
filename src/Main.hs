@@ -8,7 +8,9 @@ import           Xdcc
 import           Control.Applicative          (optional)
 import           Control.Error
 import           Control.Monad                (replicateM)
+import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
+import           Control.Monad.Trans.Reader   (ReaderT, ask, asks, runReaderT)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
 import           Data.IP                      (IPv4)
@@ -68,18 +70,21 @@ main = do defaultNick <- randomNick
   where randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
 runWith :: Options -> ExceptT String IO ()
-runWith Options {..} = withConnection (\con -> do
-    let context = Context { connection = con
-                          , publicIp = publicIp
-                          , remoteNick = rNick }
-    protocol <- request context pack
-    resumePos <- isResumable context protocol
-    case resumePos of
-      0 -> downloadWith context protocol
-      pos -> resumeWith context protocol pos)
+runWith opts = withConnection opts $ withContext opts $
+      runReaderT $ do protocol <- request (pack opts)
+                      resumePos <- isResumable protocol
+                      case resumePos of
+                        0 -> downloadWith protocol
+                        pos -> resumeWith protocol pos
+
+withConnection Options {..} =
+    bracket (connectAndJoin network nick channels verbose)
+            (lift . disconnectFrom)
   where channels = mainChannel : additionalChannels
-        withConnection = bracket (connectAndJoin network nick channels verbose)
-                                 (lift . disconnectFrom)
+
+withContext Options {..} f con = f Context { connection = con
+                                           , publicIp = publicIp
+                                           , remoteNick = rNick }
 
 connectAndJoin :: Network -> Nickname -> [Channel] -> Bool
                   -> ExceptT String IO Connection
@@ -90,26 +95,27 @@ connectAndJoin network nick chans withDebug =
        putStrLn "Connected.") (
        putStrLn $ "Joined " ++ show chans ++ ".")
 
-request :: Context -> Pack -> ExceptT String IO Protocol
-request c@Context { remoteNick = rNick } pack =
-  do lift $ putStrLn $ "Requesting pack #" ++ show pack ++ " from "
-                    ++ remoteNick c ++ ", awaiting instructions…"
-     requestFile c pack (\f ->
+request :: Pack -> ReaderT Context (ExceptT String IO) Protocol
+request pack =
+  do rNick <- asks remoteNick
+     liftIO $ putStrLn $ "Requesting pack #" ++ show pack ++ " from "
+                      ++ rNick ++ ", awaiting instructions…"
+     requestFile pack (\f ->
        putStrLn ( "Received instructions for file " ++ show (fileName f)
                ++ " of size " ++ show (fileSize f) ++ " bytes." ))
 
-downloadWith :: Context -> Protocol -> ExceptT String IO ()
-downloadWith c p = lift .
-  displayConsoleRegions $ do
-       progressBar <- newDownloadBar (fileMetadata p)
-       acceptFile p c (tickN progressBar)
+downloadWith :: Protocol -> ReaderT Context (ExceptT String IO) ()
+downloadWith p = do c <- ask
+                    liftIO . displayConsoleRegions $ do
+                       progressBar <- newDownloadBar (fileMetadata p)
+                       acceptFile p c (tickN progressBar)
 
-resumeWith :: Context -> Protocol -> Integer -> ExceptT String IO ()
-resumeWith c p pos = lift .
-  displayConsoleRegions $ do
-       progressBar <- newDownloadBar (fileMetadata p)
-       tickN progressBar $ fromInteger pos
-       resumeFile p c (tickN progressBar) pos
+resumeWith :: Protocol -> Integer -> ReaderT Context (ExceptT String IO) ()
+resumeWith p pos = do c <- ask
+                      liftIO . displayConsoleRegions $ do
+                         progressBar <- newDownloadBar (fileMetadata p)
+                         tickN progressBar $ fromInteger pos
+                         resumeFile p c (tickN progressBar) pos
 
 newDownloadBar :: FileMetadata -> IO ProgressBar
 newDownloadBar f =

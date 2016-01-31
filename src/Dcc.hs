@@ -6,7 +6,6 @@ module Dcc ( Context (..)
            , Protocol (..)
            , FileMetadata (..)
            , asCtcpMsg
-           , rNick
            , isResumable
            , fileMetadata
            , parseDccProtocol
@@ -22,7 +21,9 @@ import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import qualified Control.Concurrent.Broadcast as Broadcast (listenTimeout, new)
 import           Control.Error
 import           Control.Monad                (unless)
+import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
+import           Control.Monad.Trans.Reader   (ReaderT, ask, asks)
 import           Data.Binary.Put              (putWord32be, runPut)
 import           Data.ByteString.Char8        (ByteString, length, null, pack,
                                                unwords)
@@ -59,8 +60,7 @@ acceptFile (ReverseDcc f ip t) c onChunk = do
       withPassiveSocket ip (sendCmd (connection c) . offerPassiveSink c f t)
         (downloadToFile file onChunk 0))
 
-resumeFile :: Protocol -> Context -> (Int -> IO ()) -> Integer
-              -> IO ()
+resumeFile :: Protocol -> Context -> (Int -> IO ()) -> Integer -> IO ()
 resumeFile (Dcc f ip port) _ onChunk pos = do
     outputConcurrent $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n"
     withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
@@ -98,14 +98,12 @@ withPassiveSocket ip onListen onConnected = withSocketsDo $ do
 
 sockAddr ip port = SockAddrInet port (toHostAddress ip)
 
-tryResume :: Protocol -> Context -> Integer -> Command
-tryResume p c pos = MPrivmsg (rNick c) $ asCtcpMsg (resumeMsgParams p pos)
+resumeCmd :: Protocol -> Nickname -> Integer -> Command
+resumeCmd p remoteNick pos =
+    MPrivmsg (pack remoteNick) $ asCtcpMsg (resumeMsgParams p pos)
 
 asCtcpMsg :: [ByteString] -> ByteString
 asCtcpMsg = getUnderlyingByteString . encodeCTCP . unwords
-
-rNick :: Context -> ByteString
-rNick = pack . remoteNick
 
 onResumeAccepted :: Protocol -> Nickname -> Broadcast Integer -> EventFunc
 onResumeAccepted p remoteNick resumeAccepted _ =
@@ -114,32 +112,34 @@ onResumeAccepted p remoteNick resumeAccepted _ =
       Just position -> broadcast resumeAccepted position
       _ -> return ())
 
-isResumable :: Context -> Protocol -> ExceptT String IO Integer
-isResumable c p =
+isResumable :: Protocol -> ReaderT Context (ExceptT String IO) Integer
+isResumable p =
   let f = fileMetadata p in
-  do exists <- lift $ fileExist (fileName f)
+  do exists <- liftIO $ fileExist (fileName f)
      if exists then
-       do stats <- lift $ getFileStatus (fileName f)
+       do stats <- liftIO $ getFileStatus (fileName f)
           let curSize = fromIntegral (Files.fileSize stats)
           if isRegularFile stats then
             if curSize < fileSize f then do
-              lift $ putStrLn "Resumable file found."
-              sendResumeRequest c curSize p
-            else throwE "File already exists and seems complete."
-          else do lift $ putStrLn "No resumable file found, starting from zero."
+              liftIO $ putStrLn "Resumable file found."
+              sendResumeRequest p curSize
+            else lift $ throwE "File already exists and seems complete."
+          else do liftIO $ putStrLn "No resumable file found, starting from zero."
                   return 0
-      else do lift $ putStrLn "No resumable file found, starting from zero."
+      else do liftIO $ putStrLn "No resumable file found, starting from zero."
               return 0
 
-sendResumeRequest :: Context -> Integer -> Protocol -> ExceptT String IO Integer
-sendResumeRequest c pos p =
-    do receivedAcceptMsg <- lift Broadcast.new
-       lift $ changeEvents (connection c)
-           [ Privmsg (onResumeAccepted p (remoteNick c) receivedAcceptMsg)
+sendResumeRequest :: Protocol -> Integer
+                     -> ReaderT Context (ExceptT String IO) Integer
+sendResumeRequest p pos =
+    do Context { connection, remoteNick } <- ask
+       receivedAcceptMsg <- liftIO Broadcast.new
+       liftIO $ changeEvents connection
+           [ Privmsg (onResumeAccepted p remoteNick receivedAcceptMsg)
            , Notice logMsg ]
-       lift $ sendCmd (connection c) (tryResume p c pos)
-       ackPos <- lift $ Broadcast.listenTimeout receivedAcceptMsg 30000000
-       failWith "Resume was not accepted in time." ackPos
+       liftIO $ sendCmd connection (resumeCmd p remoteNick pos)
+       ackPos <- liftIO $ Broadcast.listenTimeout receivedAcceptMsg 30000000
+       lift $ failWith "Resume was not accepted in time." ackPos
 
 downloadToFile :: File -> (Int -> IO ()) -> Int -> Socket -> IO ()
 downloadToFile file onPacket size sock =

@@ -17,6 +17,8 @@ import           Irc
 import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import qualified Control.Concurrent.Broadcast as Broadcast (listenTimeout, new)
 import           Control.Error
+import           Control.Monad.IO.Class       (liftIO)
+import           Control.Monad.Trans.Reader   (ReaderT, ask)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.ByteString.Char8        (pack)
 import qualified Data.ByteString.Lazy.Char8   as Lazy (fromStrict)
@@ -29,20 +31,21 @@ import           Network.SimpleIRC            (EventFunc,
                                                IrcMessage (..), changeEvents,
                                                mMsg)
 
-whenIsJust :: Maybe a -> (a -> IO b) -> IO ()
+whenIsJust :: Monad m => Maybe a -> (a -> m b) -> m ()
 whenIsJust value function = traverse_ function value
 
-requestFile :: Context -> Pack -> (FileMetadata -> IO ())
-               -> ExceptT String IO Protocol
-requestFile c num onReceive =
-    do instructionsReceived <- lift Broadcast.new
-       lift $ changeEvents (connection c)
-         [ Privmsg (onInstructionsReceived (remoteNick c) instructionsReceived)
+requestFile :: Pack -> (FileMetadata -> IO ())
+               -> ReaderT Context (ExceptT String IO) Protocol
+requestFile num onReceive =
+    do Context { connection, remoteNick } <- ask
+       instructionsReceived <- liftIO Broadcast.new
+       liftIO $ changeEvents connection
+         [ Privmsg (onInstructionsReceived remoteNick instructionsReceived)
          , Notice logMsg ]
-       lift $ sendMsgTo (connection c) (remoteNick c) message
-       protocol <- lift $ Broadcast.listenTimeout instructionsReceived 30000000
-       lift $ whenIsJust protocol (onReceive . fileMetadata)
-       failWith "Didn't receive instructions in time." protocol
+       liftIO $ sendMsgTo connection remoteNick message
+       protocol <- liftIO (Broadcast.listenTimeout instructionsReceived 30000000)
+       liftIO $ whenIsJust protocol (onReceive . fileMetadata)
+       lift $ failWith "Didn't receive instructions in time." protocol
   where message = "XDCC SEND #" <> pack (show num)
 
 onInstructionsReceived :: Nickname -> Broadcast Protocol -> EventFunc
