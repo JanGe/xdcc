@@ -24,7 +24,8 @@ import           Control.Error
 import           Control.Monad                (unless)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.Binary.Put              (putWord32be, runPut)
-import           Data.ByteString.Char8        (ByteString, pack, null, unwords, length)
+import           Data.ByteString.Char8        (ByteString, length, null, pack,
+                                               unwords)
 import qualified Data.ByteString.Lazy.Char8   as Lazy (toStrict)
 import           Data.IP                      (IPv4, toHostAddress)
 import           Network.IRC.CTCP
@@ -32,6 +33,7 @@ import           Network.Socket               hiding (recv, recvFrom, send,
                                                sendTo)
 import           Network.Socket.ByteString
 import           Prelude                      hiding (length, null, unwords)
+import           System.Console.Concurrent    (outputConcurrent)
 import           System.IO                    (BufferMode (NoBuffering),
                                                IOMode (AppendMode))
 import           System.IO.Streams            (withFileAsOutput,
@@ -48,11 +50,11 @@ import           Network.SimpleIRC            (Command (MPrivmsg), EventFunc,
 
 acceptFile :: Protocol -> Connection -> Context -> (Int -> IO ()) -> IO ()
 acceptFile (Dcc f ip port) _ _ onChunk = do
-    putStrLn $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…"
+    outputConcurrent $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n"
     withFileAsOutput (fileName f) (\file ->
       withActiveSocket ip port $ downloadToFile file onChunk 0)
 acceptFile p@(ReverseDcc f ip t) irc c onChunk = do
-    putStrLn $ "Awaiting connection from " ++ show ip ++ "…"
+    outputConcurrent $ "Awaiting connection from " ++ show ip ++ "…\n"
     withFileAsOutput (fileName f) (\file ->
       withPassiveSocket ip (sendCmd irc . offerPassiveSink c f t)
         (downloadToFile file onChunk 0))
@@ -60,17 +62,17 @@ acceptFile p@(ReverseDcc f ip t) irc c onChunk = do
 resumeFile :: Protocol -> Connection -> Context -> (Int -> IO ()) -> Integer
               -> IO ()
 resumeFile (Dcc f ip port) _ _ onChunk pos = do
-    putStrLn $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…"
+    outputConcurrent $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n"
     withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
       withActiveSocket ip port (\con ->
-          do putStrLn $ "Resuming file at " ++ show pos ++ "…"
+          do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
              downloadToFile file onChunk (fromIntegral pos) con))
 resumeFile (ReverseDcc f ip t) irc c onChunk pos = do
-    putStrLn $ "Awaiting connection from " ++ show ip ++ "…"
+    outputConcurrent $ "Awaiting connection from " ++ show ip ++ "…\n"
     withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
-      withPassiveSocket ip (sendCmd irc . offerPassiveSink c f t)
-          (\con -> do putStrLn $ "Resuming file at " ++ show pos ++ "…"
-                      downloadToFile file onChunk (fromIntegral pos) con))
+      withPassiveSocket ip (sendCmd irc . offerPassiveSink c f t) (\con ->
+          do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
+             downloadToFile file onChunk (fromIntegral pos) con))
 
 withActiveSocket ip port onConnected = withSocketsDo $ do
     sock <- socket AF_INET Stream defaultProtocol
