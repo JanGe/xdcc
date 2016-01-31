@@ -4,7 +4,6 @@
 module Xdcc ( requestFile
             , isResumable
             , Protocol (..)
-            , Context (..)
             , FileMetadata (..)
             , fileMetadata
             , resumeFile
@@ -18,7 +17,7 @@ import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import qualified Control.Concurrent.Broadcast as Broadcast (listenTimeout, new)
 import           Control.Error
 import           Control.Monad.IO.Class       (liftIO)
-import           Control.Monad.Trans.Reader   (ReaderT, ask)
+import           Control.Monad.Trans.Reader   (ask)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.ByteString.Char8        (pack)
 import qualified Data.ByteString.Lazy.Char8   as Lazy (fromStrict)
@@ -34,8 +33,7 @@ import           Network.SimpleIRC            (EventFunc,
 whenIsJust :: Monad m => Maybe a -> (a -> m b) -> m ()
 whenIsJust value function = traverse_ function value
 
-requestFile :: Pack -> (FileMetadata -> IO ())
-               -> ReaderT Context (ExceptT String IO) Protocol
+requestFile :: Pack -> (FileMetadata -> IO ()) -> IrcIO Protocol
 requestFile num onReceive =
     do Context { connection, remoteNick } <- ask
        instructionsReceived <- liftIO Broadcast.new

@@ -1,8 +1,9 @@
 import           Dcc.Parser
 import           Dcc.Types
 
+import           Data.Binary           (byteSwap32)
 import           Data.ByteString.Char8 (pack)
-import           Data.IP               (toIPv4)
+import           Data.IP               (fromHostAddress)
 import           Network.IRC.CTCP      (encodeCTCP)
 import           Text.Parse.ByteString (runParser)
 
@@ -16,10 +17,10 @@ parseDccOffer fileName ip port fileSize =
                                     ++ show ip ++ " "
                                     ++ show port ++ " "
                                     ++ show fileSize ))
-  ) == Right (Dcc FileMetadata { fileName = "2342q3.0234lsdfsaef-sadfseaf.txt"
-                               , fileSize = 1012239271}
-                  (toIPv4 [88, 198, 155, 170])
-                  52368)
+  ) == Right (Dcc FileMetadata { fileName = fileName
+                               , fileSize = fileSize}
+                  (fromHostAddress . byteSwap32 . fromIntegral $ ip)
+                  (fromIntegral port))
 
 main = print $ parseDccOffer
          "2342q3.0234lsdfsaef-sadfseaf.txt"

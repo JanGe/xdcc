@@ -1,7 +1,6 @@
 {-# LANGUAGE NamedFieldPuns #-}
 
-module Dcc.Types ( Context (..)
-                 , File
+module Dcc.Types ( File
                  , FileMetadata (..)
                  , Token
                  , Protocol (..)
@@ -10,14 +9,10 @@ module Dcc.Types ( Context (..)
 
 import           Irc
 
-import           Data.ByteString.Char8 (ByteString)
-import           Data.IP               (IPv4)
-import           Network.Socket        (PortNumber)
-import           System.IO.Streams     (OutputStream)
-
-data Context = Context { connection :: Connection
-                       , remoteNick :: Nickname
-                       , publicIp   :: Maybe IPv4 }
+import           Data.ByteString.Char8      (ByteString)
+import           Data.IP                    (IPv4)
+import           Network.Socket             (PortNumber)
+import           System.IO.Streams          (OutputStream)
 
 type File = OutputStream ByteString
 

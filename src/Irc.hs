@@ -1,7 +1,9 @@
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Irc ( Connection
+module Irc ( IrcIO
+           , Context (..)
+           , Connection
            , Network
            , Nickname
            , Channel
@@ -21,9 +23,11 @@ import           Control.Concurrent.Broadcast
 import           Control.Error
 import           Control.Monad
 import           Control.Monad.Trans.Class    (lift)
+import           Control.Monad.Trans.Reader   (ReaderT)
 import           Data.ByteString.Char8        hiding (length, map, zip)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
+import           Data.IP                      (IPv4)
 import           Data.Monoid
 import           Prelude                      hiding (and, putStrLn)
 import           System.IO.Error              (ioeGetErrorString)
@@ -36,6 +40,12 @@ type Channel = CI String
 type Pack = Int
 
 type Connection = MIrc
+
+type IrcIO a = ReaderT Context (ExceptT String IO) a
+
+data Context = Context { connection :: Connection
+                       , remoteNick :: Nickname
+                       , publicIp   :: Maybe IPv4 }
 
 config :: Network -> Nickname -> [(Channel, Broadcast ())] -> IrcConfig
 config network name allChannelsJoined = (mkDefaultConfig network name) {

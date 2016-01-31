@@ -2,8 +2,7 @@
 {-# LANGUAGE NamedFieldPuns            #-}
 {-# LANGUAGE OverloadedStrings         #-}
 
-module Dcc ( Context (..)
-           , Protocol (..)
+module Dcc ( Protocol (..)
            , FileMetadata (..)
            , asCtcpMsg
            , isResumable
@@ -23,7 +22,7 @@ import           Control.Error
 import           Control.Monad                (unless)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ReaderT, ask, asks)
+import           Control.Monad.Trans.Reader   (ask, asks)
 import           Data.Binary.Put              (putWord32be, runPut)
 import           Data.ByteString.Char8        (ByteString, length, null, pack,
                                                unwords)
@@ -112,7 +111,7 @@ onResumeAccepted p remoteNick resumeAccepted _ =
       Just position -> broadcast resumeAccepted position
       _ -> return ())
 
-isResumable :: Protocol -> ReaderT Context (ExceptT String IO) Integer
+isResumable :: Protocol -> IrcIO Integer
 isResumable p =
   let f = fileMetadata p in
   do exists <- liftIO $ fileExist (fileName f)
@@ -129,8 +128,7 @@ isResumable p =
       else do liftIO $ putStrLn "No resumable file found, starting from zero."
               return 0
 
-sendResumeRequest :: Protocol -> Integer
-                     -> ReaderT Context (ExceptT String IO) Integer
+sendResumeRequest :: Protocol -> Integer -> IrcIO Integer
 sendResumeRequest p pos =
     do Context { connection, remoteNick } <- ask
        receivedAcceptMsg <- liftIO Broadcast.new

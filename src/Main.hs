@@ -10,7 +10,7 @@ import           Control.Error
 import           Control.Monad                (replicateM)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ReaderT, ask, asks, runReaderT)
+import           Control.Monad.Trans.Reader   (ask, asks, runReaderT)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
 import           Data.IP                      (IPv4)
@@ -95,7 +95,7 @@ connectAndJoin network nick chans withDebug =
        putStrLn "Connected.") (
        putStrLn $ "Joined " ++ show chans ++ ".")
 
-request :: Pack -> ReaderT Context (ExceptT String IO) Protocol
+request :: Pack -> IrcIO Protocol
 request pack =
   do rNick <- asks remoteNick
      liftIO $ putStrLn $ "Requesting pack #" ++ show pack ++ " from "
@@ -104,13 +104,13 @@ request pack =
        putStrLn ( "Received instructions for file " ++ show (fileName f)
                ++ " of size " ++ show (fileSize f) ++ " bytes." ))
 
-downloadWith :: Protocol -> ReaderT Context (ExceptT String IO) ()
+downloadWith :: Protocol -> IrcIO ()
 downloadWith p = do c <- ask
                     liftIO . displayConsoleRegions $ do
                        progressBar <- newDownloadBar (fileMetadata p)
                        acceptFile p c (tickN progressBar)
 
-resumeWith :: Protocol -> Integer -> ReaderT Context (ExceptT String IO) ()
+resumeWith :: Protocol -> Integer -> IrcIO ()
 resumeWith p pos = do c <- ask
                       liftIO . displayConsoleRegions $ do
                          progressBar <- newDownloadBar (fileMetadata p)
