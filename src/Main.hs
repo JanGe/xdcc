@@ -19,7 +19,7 @@ import           System.Random                (randomRIO)
 
 data Options = Options { network            :: Network
                        , mainChannel        :: Channel
-                       , remoteNick         :: Nickname
+                       , rNick              :: Nickname
                        , pack               :: Pack
                        , nick               :: Nickname
                        , additionalChannels :: [Channel]
@@ -68,13 +68,15 @@ main = do defaultNick <- randomNick
   where randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
 runWith :: Options -> ExceptT String IO ()
-runWith Options {..} = withConnection (\connection -> do
-    let context = Context { publicIp = publicIp, remoteNick = remoteNick }
-    protocol <- request connection context pack
-    resumePos <- isResumable connection context protocol
+runWith Options {..} = withConnection (\con -> do
+    let context = Context { connection = con
+                          , publicIp = publicIp
+                          , remoteNick = rNick }
+    protocol <- request context pack
+    resumePos <- isResumable context protocol
     case resumePos of
-      0 -> downloadWith connection context protocol
-      pos -> resumeWith connection context protocol pos)
+      0 -> downloadWith context protocol
+      pos -> resumeWith context protocol pos)
   where channels = mainChannel : additionalChannels
         withConnection = bracket (connectAndJoin network nick channels verbose)
                                  (lift . disconnectFrom)
@@ -88,27 +90,26 @@ connectAndJoin network nick chans withDebug =
        putStrLn "Connected.") (
        putStrLn $ "Joined " ++ show chans ++ ".")
 
-request :: Connection -> Context -> Pack -> ExceptT String IO Protocol
-request connection c@Context { remoteNick = rNick } pack =
-  do lift $ putStrLn $ "Requesting pack #" ++ show pack ++ " from "  ++
-                       rNick ++ ", awaiting instructions…"
-     requestFile connection c pack (\f ->
+request :: Context -> Pack -> ExceptT String IO Protocol
+request c@Context { remoteNick = rNick } pack =
+  do lift $ putStrLn $ "Requesting pack #" ++ show pack ++ " from "
+                    ++ remoteNick c ++ ", awaiting instructions…"
+     requestFile c pack (\f ->
        putStrLn ( "Received instructions for file " ++ show (fileName f)
                ++ " of size " ++ show (fileSize f) ++ " bytes." ))
 
-downloadWith :: Connection -> Context -> Protocol -> ExceptT String IO ()
-downloadWith con c p = lift .
+downloadWith :: Context -> Protocol -> ExceptT String IO ()
+downloadWith c p = lift .
   displayConsoleRegions $ do
        progressBar <- newDownloadBar (fileMetadata p)
-       acceptFile p con c (tickN progressBar)
+       acceptFile p c (tickN progressBar)
 
-resumeWith :: Connection -> Context -> Protocol -> Integer
-              -> ExceptT String IO ()
-resumeWith con c p pos = lift .
+resumeWith :: Context -> Protocol -> Integer -> ExceptT String IO ()
+resumeWith c p pos = lift .
   displayConsoleRegions $ do
        progressBar <- newDownloadBar (fileMetadata p)
        tickN progressBar $ fromInteger pos
-       resumeFile p con c (tickN progressBar) pos
+       resumeFile p c (tickN progressBar) pos
 
 newDownloadBar :: FileMetadata -> IO ProgressBar
 newDownloadBar f =

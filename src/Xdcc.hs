@@ -32,15 +32,14 @@ import           Network.SimpleIRC            (EventFunc,
 whenIsJust :: Maybe a -> (a -> IO b) -> IO ()
 whenIsJust value function = traverse_ function value
 
-requestFile :: Connection -> Context -> Pack ->
-               (FileMetadata -> IO ())
+requestFile :: Context -> Pack -> (FileMetadata -> IO ())
                -> ExceptT String IO Protocol
-requestFile con c num onReceive =
+requestFile c num onReceive =
     do instructionsReceived <- lift Broadcast.new
-       lift $ changeEvents con
+       lift $ changeEvents (connection c)
          [ Privmsg (onInstructionsReceived (remoteNick c) instructionsReceived)
          , Notice logMsg ]
-       lift $ sendMsgTo con (remoteNick c) message
+       lift $ sendMsgTo (connection c) (remoteNick c) message
        protocol <- lift $ Broadcast.listenTimeout instructionsReceived 30000000
        lift $ whenIsJust protocol (onReceive . fileMetadata)
        failWith "Didn't receive instructions in time." protocol

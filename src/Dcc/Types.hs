@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 module Dcc.Types ( Context (..)
                  , File
                  , FileMetadata (..)
@@ -13,9 +15,9 @@ import           Data.IP               (IPv4)
 import           Network.Socket        (PortNumber)
 import           System.IO.Streams     (OutputStream)
 
-data Context = Context { remoteNick :: Nickname
+data Context = Context { connection :: Connection
+                       , remoteNick :: Nickname
                        , publicIp   :: Maybe IPv4 }
-               deriving (Eq, Show)
 
 type File = OutputStream ByteString
 

@@ -48,29 +48,29 @@ import           Network.SimpleIRC            (Command (MPrivmsg), EventFunc,
                                                IrcMessage (..), changeEvents,
                                                mMsg, sendCmd)
 
-acceptFile :: Protocol -> Connection -> Context -> (Int -> IO ()) -> IO ()
-acceptFile (Dcc f ip port) _ _ onChunk = do
+acceptFile :: Protocol -> Context -> (Int -> IO ()) -> IO ()
+acceptFile (Dcc f ip port) _ onChunk = do
     outputConcurrent $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n"
     withFileAsOutput (fileName f) (\file ->
       withActiveSocket ip port $ downloadToFile file onChunk 0)
-acceptFile p@(ReverseDcc f ip t) irc c onChunk = do
+acceptFile (ReverseDcc f ip t) c onChunk = do
     outputConcurrent $ "Awaiting connection from " ++ show ip ++ "…\n"
     withFileAsOutput (fileName f) (\file ->
-      withPassiveSocket ip (sendCmd irc . offerPassiveSink c f t)
+      withPassiveSocket ip (sendCmd (connection c) . offerPassiveSink c f t)
         (downloadToFile file onChunk 0))
 
-resumeFile :: Protocol -> Connection -> Context -> (Int -> IO ()) -> Integer
+resumeFile :: Protocol -> Context -> (Int -> IO ()) -> Integer
               -> IO ()
-resumeFile (Dcc f ip port) _ _ onChunk pos = do
+resumeFile (Dcc f ip port) _ onChunk pos = do
     outputConcurrent $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n"
     withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
       withActiveSocket ip port (\con ->
           do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
              downloadToFile file onChunk (fromIntegral pos) con))
-resumeFile (ReverseDcc f ip t) irc c onChunk pos = do
+resumeFile (ReverseDcc f ip t) c onChunk pos = do
     outputConcurrent $ "Awaiting connection from " ++ show ip ++ "…\n"
     withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
-      withPassiveSocket ip (sendCmd irc . offerPassiveSink c f t) (\con ->
+      withPassiveSocket ip (sendCmd (connection c) . offerPassiveSink c f t) (\con ->
           do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
              downloadToFile file onChunk (fromIntegral pos) con))
 
@@ -114,8 +114,8 @@ onResumeAccepted p remoteNick resumeAccepted _ =
       Just position -> broadcast resumeAccepted position
       _ -> return ())
 
-isResumable :: Connection -> Context -> Protocol -> ExceptT String IO Integer
-isResumable con c p =
+isResumable :: Context -> Protocol -> ExceptT String IO Integer
+isResumable c p =
   let f = fileMetadata p in
   do exists <- lift $ fileExist (fileName f)
      if exists then
@@ -124,21 +124,20 @@ isResumable con c p =
           if isRegularFile stats then
             if curSize < fileSize f then do
               lift $ putStrLn "Resumable file found."
-              sendResumeRequest con c curSize p
+              sendResumeRequest c curSize p
             else throwE "File already exists and seems complete."
           else do lift $ putStrLn "No resumable file found, starting from zero."
                   return 0
       else do lift $ putStrLn "No resumable file found, starting from zero."
               return 0
 
-sendResumeRequest :: Connection -> Context -> Integer -> Protocol
-                     -> ExceptT String IO Integer
-sendResumeRequest con c pos p =
+sendResumeRequest :: Context -> Integer -> Protocol -> ExceptT String IO Integer
+sendResumeRequest c pos p =
     do receivedAcceptMsg <- lift Broadcast.new
-       lift $ changeEvents con
+       lift $ changeEvents (connection c)
            [ Privmsg (onResumeAccepted p (remoteNick c) receivedAcceptMsg)
            , Notice logMsg ]
-       lift $ sendCmd con (tryResume p c pos)
+       lift $ sendCmd (connection c) (tryResume p c pos)
        ackPos <- lift $ Broadcast.listenTimeout receivedAcceptMsg 30000000
        failWith "Resume was not accepted in time." ackPos
 
