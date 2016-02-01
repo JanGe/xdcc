@@ -12,7 +12,7 @@ import           Text.Parse.ByteString (runParser)
 -- DCC SEND 2342q3.0234lsdfsaef-sadfseaf.txt 1489410986 52368 1012239271
 parseDccOffer :: String -> Int -> Int -> Integer -> Bool
 parseDccOffer fileName ip port fileSize =
-  parseDccProtocol (encodeCTCP (pack ( "DCC SEND "
+  parseSendAction (encodeCTCP (pack ( "DCC SEND "
                                     ++ fileName ++ " "
                                     ++ show ip ++ " "
                                     ++ show port ++ " "

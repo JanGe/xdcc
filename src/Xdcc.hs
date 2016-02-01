@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Xdcc ( requestFile
-            , isResumable
+            , canResumeFrom
             , Protocol (..)
             , FileMetadata (..)
             , fileMetadata
@@ -47,6 +47,6 @@ requestFile num onReceive =
 onInstructionsReceived :: Nickname -> Broadcast Protocol -> EventFunc
 onInstructionsReceived remoteNick instructionsReceived _ =
   onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
-      case doIfCtcp parseDccProtocol mMsg of
+      case doIfCtcp parseSendAction mMsg of
          Right p -> broadcast instructionsReceived p
          _ -> return ())

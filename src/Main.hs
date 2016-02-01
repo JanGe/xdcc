@@ -73,7 +73,7 @@ main = withConcurrentOutput $
 runWith :: Options -> ExceptT String IO ()
 runWith opts = withConnection opts $ withContext opts $
       runReaderT $ do protocol <- request (pack opts)
-                      resumePos <- isResumable protocol
+                      resumePos <- canResumeFrom protocol
                       case resumePos of
                         0 -> downloadWith protocol
                         pos -> resumeWith protocol pos

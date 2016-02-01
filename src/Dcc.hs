@@ -6,9 +6,9 @@ module Dcc ( Protocol (..)
            , FileMetadata (..)
            , doIfCtcp
            , sendMsg
-           , isResumable
+           , canResumeFrom
            , fileMetadata
-           , parseDccProtocol
+           , parseSendAction
            , resumeFile
            , acceptFile
            ) where
@@ -64,16 +64,18 @@ acceptFile (ReverseDcc f ip t) c onChunk = do
 resumeFile :: Protocol -> Context -> (Int -> IO ()) -> Integer -> IO ()
 resumeFile (Dcc f ip port) _ onChunk pos = do
     outputConcurrent ("Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n")
-    withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
+    withFileAppending (fileName f) (\file ->
       withActiveSocket ip port (\con ->
           do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
              downloadToFile file onChunk (fromIntegral pos) con))
 resumeFile (ReverseDcc f ip t) c onChunk pos = do
     outputConcurrent ("Awaiting connection from " ++ show ip ++ "…\n")
-    withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
+    withFileAppending (fileName f)  (\file ->
       withPassiveSocket ip (sendMsg c . offerPassiveSink c f t) (\con ->
           do outputConcurrent ("Resuming file at " ++ show pos ++ "…\n")
              downloadToFile file onChunk (fromIntegral pos) con))
+
+withFileAppending fn = withFileAsOutputExt fn AppendMode NoBuffering
 
 withActiveSocket :: IPv4 -> PortNumber -> (Socket -> IO a) -> IO ()
 withActiveSocket ip port onConnected = withSocketsDo $ do
@@ -95,7 +97,7 @@ withPassiveSocket ip onListen onConnected = withSocketsDo $ do
         | client == toHostAddress ip -> do onConnected conn
                                            sClose conn
         | otherwise -> do outputConcurrent ( "Expected connection from host "
-                                          ++ (show . fromHostAddress) client
+                                          ++ show (fromHostAddress client)
                                           ++ ", not from " ++ show ip
                                           ++". Aborting…\n" )
                           sClose conn
@@ -105,30 +107,6 @@ withPassiveSocket ip onListen onConnected = withSocketsDo $ do
 
 sockAddr :: IPv4 -> PortNumber -> SockAddr
 sockAddr ip port = SockAddrInet port (toHostAddress ip)
-
-onResumeAccepted :: Protocol -> Nickname -> Broadcast Integer -> EventFunc
-onResumeAccepted p remoteNick resumeAccepted _ =
-    onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
-        case doIfCtcp (parseAcceptPosition p) mMsg of
-          Right position -> broadcast resumeAccepted position
-          Left e -> outputConcurrent e)
-
-isResumable :: Protocol -> IrcIO Integer
-isResumable p =
-  do let f = fileMetadata p
-     exists <- liftIO $ fileExist (fileName f)
-     if exists
-        then do stats <- liftIO $ getFileStatus (fileName f)
-                let curSize = fromIntegral (Files.fileSize stats)
-                if isRegularFile stats
-                   then if curSize < fileSize f
-                           then do liftIO $ outputConcurrent ("Resumable file found with size " ++ show curSize ++ ".\n")
-                                   sendResumeRequest p curSize
-                           else lift $ throwE "File already exists and seems complete."
-                   else do liftIO $ outputConcurrent ("No resumable file found, starting from zero.\n" :: String)
-                           return 0
-        else do liftIO $ outputConcurrent ("No resumable file found, starting from zero.\n" :: String)
-                return 0
 
 sendResumeRequest :: Protocol -> Integer -> IrcIO Integer
 sendResumeRequest p pos =
@@ -141,16 +119,52 @@ sendResumeRequest p pos =
        ackPos <- liftIO $ Broadcast.listenTimeout receivedAcceptMsg 30000000
        lift $ failWith "Resume was not accepted in time." ackPos
 
+onResumeAccepted :: Protocol -> Nickname -> Broadcast Integer -> EventFunc
+onResumeAccepted p remoteNick resumeAccepted _ =
+    onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
+        case doIfCtcp (parseAcceptAction p) mMsg of
+          Right position -> broadcast resumeAccepted position
+          Left e -> outputConcurrent e)
+
+canResumeFrom :: Protocol -> IrcIO Integer
+canResumeFrom p =
+    do curSize <- liftIO $ getFileSizeSafe file
+       case curSize of
+         Just s
+           | s < totalSize ->
+               do liftIO $ outputConcurrent ( "Resumable file found with size "
+                                         ++ show curSize ++ ".\n")
+                  sendResumeRequest p s
+           | otherwise ->
+               lift $ throwE "File already exists and seems complete."
+         Nothing ->
+             do liftIO $ outputConcurrent ( "No resumable file found, starting "
+                                         ++ "from zero.\n" :: String)
+                return 0
+  where file = fileName (fileMetadata p)
+        totalSize = fileSize (fileMetadata p)
+        size = fromIntegral . Files.fileSize
+
+getFileSizeSafe :: FilePath -> IO (Maybe Integer)
+getFileSizeSafe file =
+    do exists <- fileExist file
+       if exists
+          then do stats <- getFileStatus file
+                  if isRegularFile stats
+                     then return $ Just (fromIntegral (Files.fileSize stats))
+                     else return Nothing
+          else return Nothing
+
 downloadToFile :: File -> (Int -> IO ()) -> Int -> Socket -> IO ()
-downloadToFile file onPacket size sock =
+downloadToFile file onChunk size sock =
   do buffer <- recv sock $ 4096 * 1024
-     let received = length buffer
-     let receivedTotal = size + received
      unless (null buffer) $
-       do onPacket received
-          sendNumReceived sock receivedTotal
-          Just buffer `write` file
-          downloadToFile file onPacket receivedTotal sock
+            do let received = length buffer
+               onChunk received
+               let receivedTotal = size + received
+               sendNumReceived sock receivedTotal
+               Just buffer `write` file
+               downloadToFile file onChunk receivedTotal sock
 
 sendNumReceived :: Socket -> Int -> IO ()
 sendNumReceived sock num = sendAll sock $ toNetworkByteOrder num
@@ -177,8 +191,7 @@ sendMsg :: Context -> ByteString -> IO ()
 sendMsg Context { connection, remoteNick } msg =
     do sendCmd connection command
        outputConcurrent (show command ++ "\n")
-  where recipient = pack remoteNick
-        command = MPrivmsg recipient msg
+  where command = MPrivmsg (pack remoteNick) msg
 
 resumeMsgParams :: Protocol -> Integer -> [ByteString]
 resumeMsgParams (Dcc f _ port) pos = "DCC RESUME" :

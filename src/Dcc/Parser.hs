@@ -1,5 +1,5 @@
-module Dcc.Parser ( parseDccProtocol
-                  , parseAcceptPosition
+module Dcc.Parser ( parseSendAction
+                  , parseAcceptAction
                   ) where
 
 import           Dcc.Types
@@ -14,59 +14,59 @@ import           Text.Parse.ByteString      (Parser, literal, many1Satisfy,
                                              onFail, parseUnsignedInteger,
                                              runParser)
 
-parseDccProtocol :: CTCPByteString -> Either String Protocol
-parseDccProtocol = parseMsg offerParser
+parseSendAction :: CTCPByteString -> Either String Protocol
+parseSendAction = parseAction sendActionParser
 
-parseAcceptPosition :: Protocol -> CTCPByteString -> Either String Integer
-parseAcceptPosition = parseMsg . acceptParser
+parseAcceptAction :: Protocol -> CTCPByteString -> Either String Integer
+parseAcceptAction = parseAction . acceptActionParser
 
-parseMsg :: Parser a -> CTCPByteString -> Either String a
-parseMsg parser = fst . runParser parser . Lazy.fromStrict . decodeCTCP
+parseAction :: Parser a -> CTCPByteString -> Either String a
+parseAction parser = fst . runParser parser . Lazy.fromStrict . decodeCTCP
 
 -- TODO Use another parser framework
-offerParser :: Parser Protocol
-offerParser = dccParser `onFail` reverseDccParser
-  where dccParser = do (fileName, ip) <- parseSendPrefix
-                       port <- parseTcpPort
-                       skipSpace
-                       fileSize <- parseUnsignedInteger
-                       return (Dcc (FileMetadata fileName fileSize) ip port)
-        reverseDccParser = do (fileName, ip) <- parseSendPrefix
-                              literal "0"
-                              skipSpace
-                              fileSize <- parseUnsignedInteger
-                              skipSpace
-                              token <- parseToken
-                              return (ReverseDcc (FileMetadata fileName fileSize)
-                                                 ip
-                                                 token)
+sendActionParser :: Parser Protocol
+sendActionParser =
+    do literal "DCC SEND"
+       skipSpace
+       fileName <- parseFileName
+       skipSpace
+       ip <- parseIpBE
+       skipSpace
+       onFail
+         (do port <- parseTcpPort
+             skipSpace
+             fileSize <- parseUnsignedInteger
+             return (Dcc (FileMetadata fileName fileSize) ip port))
+         (do literal "0"
+             skipSpace
+             fileSize <- parseUnsignedInteger
+             skipSpace
+             token <- parseToken
+             return (ReverseDcc (FileMetadata fileName fileSize)
+                                ip
+                                token))
 
-parseSendPrefix = do literal "DCC SEND"
-                     skipSpace
-                     fileName <- parseFileName
-                     skipSpace
-                     ip <- parseIpBE
-                     skipSpace
-                     return (fileName, ip)
+acceptActionParser :: Protocol -> Parser Integer
+acceptActionParser (Dcc f _ p) =
+    do skipAcceptActionPrefix f
+       literal (show p)
+       skipSpace
+       parseUnsignedInteger
+acceptActionParser (ReverseDcc f _ t) =
+    do skipAcceptActionPrefix f
+       literal "0"
+       skipSpace
+       pos <- parseUnsignedInteger
+       skipSpace
+       literal t
+       return pos
 
-acceptParser :: Protocol -> Parser Integer
-acceptParser (Dcc f _ p) = do skipAcceptPrefix f
-                              literal (show p)
-                              skipSpace
-                              parseUnsignedInteger
-acceptParser (ReverseDcc f _ t) = do skipAcceptPrefix f
-                                     literal "0"
-                                     skipSpace
-                                     pos <- parseUnsignedInteger
-                                     skipSpace
-                                     literal t
-                                     return pos
-
-skipAcceptPrefix :: FileMetadata -> Parser ()
-skipAcceptPrefix f = do literal "DCC ACCEPT"
-                        skipSpace
-                        literal (fileName f)
-                        skipSpace
+skipAcceptActionPrefix :: FileMetadata -> Parser ()
+skipAcceptActionPrefix f =
+    do literal "DCC ACCEPT"
+       skipSpace
+       literal (fileName f)
+       skipSpace
 
 skipSpace :: Parser ()
 skipSpace = do literal " "
