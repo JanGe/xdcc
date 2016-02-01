@@ -4,10 +4,9 @@ module Dcc.Parser ( parseDccProtocol
 
 import           Dcc.Types
 
-import           Control.Error              (hush)
 import           Control.Monad              (when)
 import           Data.Binary                (byteSwap32)
-import qualified Data.ByteString.Lazy.Char8 as Lazy (ByteString, fromStrict, toStrict,
+import qualified Data.ByteString.Lazy.Char8 as Lazy (fromStrict,
                                                      unpack)
 import           Data.IP                    (IPv4, fromHostAddress)
 import           Network.IRC.CTCP           (CTCPByteString, decodeCTCP)
@@ -42,7 +41,7 @@ offerParser = dccParser `onFail` reverseDccParser
                        fileSize <- parseUnsignedInteger
                        return (Dcc (FileMetadata fileName fileSize) ip port)
         reverseDccParser = do (fileName, ip) <- commonPrefix
-                              literal (show 0)
+                              literal "0"
                               skipSpace
                               fileSize <- parseUnsignedInteger
                               skipSpace
@@ -56,14 +55,14 @@ acceptParser (Dcc f p _) = do literal "DCC ACCEPT"
                               skipSpace
                               literal (fileName f)
                               skipSpace
-                              literal (show p)
+                              literal (show p) -- TODO wrong
                               skipSpace
                               parseUnsignedInteger
 acceptParser (ReverseDcc f _ t) = do literal "DCC ACCEPT"
                                      skipSpace
                                      literal (fileName f)
                                      skipSpace
-                                     literal (show 0)
+                                     literal "0"
                                      skipSpace
                                      pos <- parseUnsignedInteger
                                      skipSpace

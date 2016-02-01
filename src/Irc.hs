@@ -18,8 +18,8 @@ module Irc ( IrcIO
            , sendMsgTo
            ) where
 
-import           Control.Concurrent
-import           Control.Concurrent.Broadcast
+import           Control.Concurrent.Broadcast (Broadcast, broadcast, listen)
+import qualified Control.Concurrent.Broadcast as Broadcast (new)
 import           Control.Error
 import           Control.Monad
 import           Control.Monad.Trans.Class    (lift)
@@ -57,7 +57,7 @@ config network name allChannelsJoined = (mkDefaultConfig network name) {
 connectTo :: Network -> Nickname -> [Channel] -> Bool -> IO () -> IO ()
              -> ExceptT String IO Connection
 connectTo network nick chans withDebug onConnected onJoined =
-  do channelsJoinedEvents <- lift $ replicateM (length chans) new
+  do channelsJoinedEvents <- lift $ replicateM (length chans) Broadcast.new
      let allChannelsJoined = zip chans channelsJoinedEvents
      let config' = config network nick allChannelsJoined
      maybeConnected <- lift $ connect config' True withDebug
@@ -83,8 +83,10 @@ onJoin channel notifyJoined connection ircMessage =
             broadcast notifyJoined ()) ircMessage
 
 logMsg :: EventFunc
-logMsg connection IrcMessage { mOrigin = Just origin, mCode, mMsg } =
+logMsg _ IrcMessage { mOrigin = Just origin, mCode, mMsg } =
     putStrLn $ mCode <> " " <> origin <>": " <> mMsg
+logMsg _ IrcMessage { mCode, mMsg } =
+    putStrLn $ mCode <> ": " <> mMsg
 
 onMessageDo :: (a -> Bool) -> (a -> IO ()) -> a -> IO ()
 onMessageDo predicate f x = when (predicate x) $ f x
@@ -105,7 +107,3 @@ msgHasPrefix prefix IrcMessage { mMsg } = prefix `isPrefixOf` mMsg
 
 and :: (a -> Bool) -> (a -> Bool) -> a -> Bool
 and f g x = f x && g x
-
-fromRight :: Either IOError a -> IO a
-fromRight (Left e) = ioError e
-fromRight (Right v) = return v

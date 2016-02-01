@@ -7,8 +7,6 @@ module Dcc.Types ( File
                  , fileMetadata
                  ) where
 
-import           Irc
-
 import           Data.ByteString.Char8      (ByteString)
 import           Data.IP                    (IPv4)
 import           Network.Socket             (PortNumber)

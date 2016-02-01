@@ -22,7 +22,7 @@ import           Control.Error
 import           Control.Monad                (unless)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ask, asks)
+import           Control.Monad.Trans.Reader   (ask)
 import           Data.Binary.Put              (putWord32be, runPut)
 import           Data.ByteString.Char8        (ByteString, length, null, pack,
                                                unwords)
@@ -38,7 +38,7 @@ import           System.IO                    (BufferMode (NoBuffering),
                                                IOMode (AppendMode))
 import           System.IO.Streams            (withFileAsOutput,
                                                withFileAsOutputExt, write)
-import           System.Posix.Files           (FileStatus, fileExist,
+import           System.Posix.Files           (fileExist,
                                                getFileStatus, isRegularFile)
 import qualified System.Posix.Files           as Files (fileSize)
 import           System.Timeout
@@ -73,12 +73,14 @@ resumeFile (ReverseDcc f ip t) c onChunk pos = do
           do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
              downloadToFile file onChunk (fromIntegral pos) con))
 
+withActiveSocket :: IPv4 -> PortNumber -> (Socket -> IO a) -> IO ()
 withActiveSocket ip port onConnected = withSocketsDo $ do
     sock <- socket AF_INET Stream defaultProtocol
     connect sock (sockAddr ip port)
     onConnected sock
     sClose sock
 
+withPassiveSocket :: IPv4 -> (PortNumber -> IO a) -> (Socket -> IO b) -> IO ()
 withPassiveSocket ip onListen onConnected = withSocketsDo $ do
     sock <- socket AF_INET Stream defaultProtocol
     bind sock $ SockAddrInet aNY_PORT iNADDR_ANY
@@ -95,6 +97,7 @@ withPassiveSocket ip onListen onConnected = withSocketsDo $ do
       _ -> return ()
     sClose sock
 
+sockAddr :: IPv4 -> PortNumber -> SockAddr
 sockAddr ip port = SockAddrInet port (toHostAddress ip)
 
 resumeCmd :: Protocol -> Nickname -> Integer -> Command
@@ -107,9 +110,9 @@ asCtcpMsg = getUnderlyingByteString . encodeCTCP . unwords
 onResumeAccepted :: Protocol -> Nickname -> Broadcast Integer -> EventFunc
 onResumeAccepted p remoteNick resumeAccepted _ =
   onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
-    case asCTCP mMsg >>= hush . parseAcceptPosition p of
-      Just position -> broadcast resumeAccepted position
-      _ -> return ())
+    case note "No CTCP" (asCTCP mMsg) >>= parseAcceptPosition p of
+      Right position -> broadcast resumeAccepted position
+      Left e -> putStrLn e)
 
 isResumable :: Protocol -> IrcIO Integer
 isResumable p =
@@ -159,6 +162,7 @@ toNetworkByteOrder = Lazy.toStrict . runPut . putWord32be . fromIntegral
 offerPassiveSink :: Context -> FileMetadata -> Token -> PortNumber -> Command
 offerPassiveSink Context { publicIp = Just ip, remoteNick} f t port =
    MPrivmsg (pack remoteNick) $ asCtcpMsg (sendMsgParams f t ip port)
+offerPassiveSink _ _ _ _ = undefined
 
 resumeMsgParams :: Protocol -> Integer -> [ByteString]
 resumeMsgParams (Dcc f _ port) pos = "DCC RESUME" :
@@ -167,7 +171,7 @@ resumeMsgParams (Dcc f _ port) pos = "DCC RESUME" :
                                               , show pos ]
 resumeMsgParams (ReverseDcc f _ t) pos = "DCC SEND" :
                                          map pack [ show (fileName f)
-                                                  , show 0
+                                                  , "0"
                                                   , show pos
                                                   , show t ]
 

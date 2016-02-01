@@ -5,14 +5,12 @@ module Main where
 import           Irc
 import           Xdcc
 
-import           Control.Applicative          (optional)
 import           Control.Error
 import           Control.Monad                (replicateM)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ask, asks, runReaderT)
-import           Data.CaseInsensitive         (CI)
-import qualified Data.CaseInsensitive         as CI
+import qualified Data.CaseInsensitive         as CI (mk)
 import           Data.IP                      (IPv4)
 import           Options.Applicative
 import           System.Console.AsciiProgress hiding (Options)
@@ -77,11 +75,14 @@ runWith opts = withConnection opts $ withContext opts $
                         0 -> downloadWith protocol
                         pos -> resumeWith protocol pos
 
+withConnection :: Options -> (Connection -> ExceptT String IO a)
+                  -> ExceptT String IO a
 withConnection Options {..} =
     bracket (connectAndJoin network nick channels verbose)
             (lift . disconnectFrom)
   where channels = mainChannel : additionalChannels
 
+withContext :: Options -> (Context -> a) -> Connection -> a
 withContext Options {..} f con = f Context { connection = con
                                            , publicIp = publicIp
                                            , remoteNick = rNick }
