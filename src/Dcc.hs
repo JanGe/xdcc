@@ -4,7 +4,8 @@
 
 module Dcc ( Protocol (..)
            , FileMetadata (..)
-           , asCtcpMsg
+           , doIfCtcp
+           , sendMsg
            , isResumable
            , fileMetadata
            , parseDccProtocol
@@ -27,7 +28,8 @@ import           Data.Binary.Put              (putWord32be, runPut)
 import           Data.ByteString.Char8        (ByteString, length, null, pack,
                                                unwords)
 import qualified Data.ByteString.Lazy.Char8   as Lazy (toStrict)
-import           Data.IP                      (IPv4, toHostAddress)
+import           Data.IP                      (IPv4, fromHostAddress,
+                                               toHostAddress)
 import           Network.IRC.CTCP
 import           Network.Socket               hiding (recv, recvFrom, send,
                                                sendTo)
@@ -38,8 +40,8 @@ import           System.IO                    (BufferMode (NoBuffering),
                                                IOMode (AppendMode))
 import           System.IO.Streams            (withFileAsOutput,
                                                withFileAsOutputExt, write)
-import           System.Posix.Files           (fileExist,
-                                               getFileStatus, isRegularFile)
+import           System.Posix.Files           (fileExist, getFileStatus,
+                                               isRegularFile)
 import qualified System.Posix.Files           as Files (fileSize)
 import           System.Timeout
 
@@ -50,27 +52,27 @@ import           Network.SimpleIRC            (Command (MPrivmsg), EventFunc,
 
 acceptFile :: Protocol -> Context -> (Int -> IO ()) -> IO ()
 acceptFile (Dcc f ip port) _ onChunk = do
-    outputConcurrent $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n"
+    outputConcurrent ("Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n")
     withFileAsOutput (fileName f) (\file ->
       withActiveSocket ip port $ downloadToFile file onChunk 0)
 acceptFile (ReverseDcc f ip t) c onChunk = do
-    outputConcurrent $ "Awaiting connection from " ++ show ip ++ "…\n"
+    outputConcurrent ("Awaiting connection from " ++ show ip ++ "…\n")
     withFileAsOutput (fileName f) (\file ->
-      withPassiveSocket ip (sendCmd (connection c) . offerPassiveSink c f t)
+      withPassiveSocket ip (sendMsg c . offerPassiveSink c f t)
         (downloadToFile file onChunk 0))
 
 resumeFile :: Protocol -> Context -> (Int -> IO ()) -> Integer -> IO ()
 resumeFile (Dcc f ip port) _ onChunk pos = do
-    outputConcurrent $ "Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n"
+    outputConcurrent ("Connecting to " ++ show ip ++ ":" ++ show port ++ "…\n")
     withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
       withActiveSocket ip port (\con ->
           do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
              downloadToFile file onChunk (fromIntegral pos) con))
 resumeFile (ReverseDcc f ip t) c onChunk pos = do
-    outputConcurrent $ "Awaiting connection from " ++ show ip ++ "…\n"
+    outputConcurrent ("Awaiting connection from " ++ show ip ++ "…\n")
     withFileAsOutputExt (fileName f) AppendMode NoBuffering (\file ->
-      withPassiveSocket ip (sendCmd (connection c) . offerPassiveSink c f t) (\con ->
-          do outputConcurrent $ "Resuming file at " ++ show pos ++ "…\n"
+      withPassiveSocket ip (sendMsg c . offerPassiveSink c f t) (\con ->
+          do outputConcurrent ("Resuming file at " ++ show pos ++ "…\n")
              downloadToFile file onChunk (fromIntegral pos) con))
 
 withActiveSocket :: IPv4 -> PortNumber -> (Socket -> IO a) -> IO ()
@@ -90,55 +92,52 @@ withPassiveSocket ip onListen onConnected = withSocketsDo $ do
     accepted <- timeout 10000000 $ accept sock
     case accepted of
       Just (conn, SockAddrInet _ client)
-          | client == toHostAddress ip -> do
-                              onConnected conn
-                              sClose conn
-      Just (conn, _) -> sClose conn
-      _ -> return ()
+        | client == toHostAddress ip -> do onConnected conn
+                                           sClose conn
+        | otherwise -> do outputConcurrent ( "Expected connection from host "
+                                          ++ (show . fromHostAddress) client
+                                          ++ ", not from " ++ show ip
+                                          ++". Aborting…\n" )
+                          sClose conn
+      _ -> outputConcurrent ( "Timeout when waiting for other party to connect "
+                           ++ "on port " ++ show port ++ "…\n")
     sClose sock
 
 sockAddr :: IPv4 -> PortNumber -> SockAddr
 sockAddr ip port = SockAddrInet port (toHostAddress ip)
 
-resumeCmd :: Protocol -> Nickname -> Integer -> Command
-resumeCmd p remoteNick pos =
-    MPrivmsg (pack remoteNick) $ asCtcpMsg (resumeMsgParams p pos)
-
-asCtcpMsg :: [ByteString] -> ByteString
-asCtcpMsg = getUnderlyingByteString . encodeCTCP . unwords
-
 onResumeAccepted :: Protocol -> Nickname -> Broadcast Integer -> EventFunc
 onResumeAccepted p remoteNick resumeAccepted _ =
-  onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
-    case note "No CTCP" (asCTCP mMsg) >>= parseAcceptPosition p of
-      Right position -> broadcast resumeAccepted position
-      Left e -> putStrLn e)
+    onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
+        case doIfCtcp (parseAcceptPosition p) mMsg of
+          Right position -> broadcast resumeAccepted position
+          Left e -> outputConcurrent e)
 
 isResumable :: Protocol -> IrcIO Integer
 isResumable p =
-  let f = fileMetadata p in
-  do exists <- liftIO $ fileExist (fileName f)
-     if exists then
-       do stats <- liftIO $ getFileStatus (fileName f)
-          let curSize = fromIntegral (Files.fileSize stats)
-          if isRegularFile stats then
-            if curSize < fileSize f then do
-              liftIO $ putStrLn "Resumable file found."
-              sendResumeRequest p curSize
-            else lift $ throwE "File already exists and seems complete."
-          else do liftIO $ putStrLn "No resumable file found, starting from zero."
-                  return 0
-      else do liftIO $ putStrLn "No resumable file found, starting from zero."
-              return 0
+  do let f = fileMetadata p
+     exists <- liftIO $ fileExist (fileName f)
+     if exists
+        then do stats <- liftIO $ getFileStatus (fileName f)
+                let curSize = fromIntegral (Files.fileSize stats)
+                if isRegularFile stats
+                   then if curSize < fileSize f
+                           then do liftIO $ outputConcurrent ("Resumable file found with size " ++ show curSize ++ ".\n")
+                                   sendResumeRequest p curSize
+                           else lift $ throwE "File already exists and seems complete."
+                   else do liftIO $ outputConcurrent ("No resumable file found, starting from zero.\n" :: String)
+                           return 0
+        else do liftIO $ outputConcurrent ("No resumable file found, starting from zero.\n" :: String)
+                return 0
 
 sendResumeRequest :: Protocol -> Integer -> IrcIO Integer
 sendResumeRequest p pos =
-    do Context { connection, remoteNick } <- ask
+    do c@Context {connection, remoteNick} <- ask
        receivedAcceptMsg <- liftIO Broadcast.new
        liftIO $ changeEvents connection
            [ Privmsg (onResumeAccepted p remoteNick receivedAcceptMsg)
            , Notice logMsg ]
-       liftIO $ sendCmd connection (resumeCmd p remoteNick pos)
+       liftIO $ sendMsg c (resumeCmd p remoteNick pos)
        ackPos <- liftIO $ Broadcast.listenTimeout receivedAcceptMsg 30000000
        lift $ failWith "Resume was not accepted in time." ackPos
 
@@ -159,26 +158,43 @@ sendNumReceived sock num = sendAll sock $ toNetworkByteOrder num
 toNetworkByteOrder :: Int -> ByteString
 toNetworkByteOrder = Lazy.toStrict . runPut . putWord32be . fromIntegral
 
-offerPassiveSink :: Context -> FileMetadata -> Token -> PortNumber -> Command
+resumeCmd :: Protocol -> Nickname -> Integer -> ByteString
+resumeCmd p remoteNick pos = asCtcpMsg (resumeMsgParams p pos)
+
+offerPassiveSink :: Context -> FileMetadata -> Token -> PortNumber -> ByteString
 offerPassiveSink Context { publicIp = Just ip, remoteNick} f t port =
-   MPrivmsg (pack remoteNick) $ asCtcpMsg (sendMsgParams f t ip port)
+    asCtcpMsg (sendMsgParams f t ip port)
 offerPassiveSink _ _ _ _ = undefined
+
+asCtcpMsg :: [ByteString] -> ByteString
+asCtcpMsg = getUnderlyingByteString . encodeCTCP . unwords
+
+doIfCtcp :: (CTCPByteString -> Either String b) -> ByteString -> Either String b
+doIfCtcp f mMsg = do msg <- note "Not a CTCP message." (asCTCP mMsg)
+                     f msg
+
+sendMsg :: Context -> ByteString -> IO ()
+sendMsg Context { connection, remoteNick } msg =
+    do sendCmd connection command
+       outputConcurrent (show command ++ "\n")
+  where recipient = pack remoteNick
+        command = MPrivmsg recipient msg
 
 resumeMsgParams :: Protocol -> Integer -> [ByteString]
 resumeMsgParams (Dcc f _ port) pos = "DCC RESUME" :
-                                     map pack [ show (fileName f)
+                                     map pack [ fileName f
                                               , show port
                                               , show pos ]
-resumeMsgParams (ReverseDcc f _ t) pos = "DCC SEND" :
-                                         map pack [ show (fileName f)
+resumeMsgParams (ReverseDcc f _ t) pos = "DCC RESUME" :
+                                         map pack [ fileName f
                                                   , "0"
                                                   , show pos
-                                                  , show t ]
+                                                  , t ]
 
 sendMsgParams :: FileMetadata -> Token -> IPv4 -> PortNumber -> [ByteString]
 sendMsgParams f t ip port = "DCC SEND" :
-                            map pack [ show (fileName f)
-                                     , show ip
+                            map pack [ fileName f
+                                     , show (ipToNetworkByteOrder ip)
                                      , show port
                                      , show (fileSize f)
-                                     , show t ]
+                                     , t ]

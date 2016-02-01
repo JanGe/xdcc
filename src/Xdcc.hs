@@ -22,7 +22,6 @@ import           Control.Monad.Trans.Class    (lift)
 import           Data.ByteString.Char8        (pack)
 import           Data.Foldable                (traverse_)
 import           Data.Monoid                  ((<>))
-import           Network.IRC.CTCP             (asCTCP)
 
 import           Network.SimpleIRC            (EventFunc,
                                                IrcEvent (Privmsg, Notice),
@@ -34,12 +33,12 @@ whenIsJust value function = traverse_ function value
 
 requestFile :: Pack -> (FileMetadata -> IO ()) -> IrcIO Protocol
 requestFile num onReceive =
-    do Context { connection, remoteNick } <- ask
+    do c <- ask
        instructionsReceived <- liftIO Broadcast.new
-       liftIO $ changeEvents connection
-         [ Privmsg (onInstructionsReceived remoteNick instructionsReceived)
+       liftIO $ changeEvents (connection c)
+         [ Privmsg (onInstructionsReceived (remoteNick c) instructionsReceived)
          , Notice logMsg ]
-       liftIO $ sendMsgTo connection remoteNick message
+       liftIO $ sendMsg c message
        protocol <- liftIO (Broadcast.listenTimeout instructionsReceived 30000000)
        liftIO $ whenIsJust protocol (onReceive . fileMetadata)
        lift $ failWith "Didn't receive instructions in time." protocol
@@ -48,6 +47,6 @@ requestFile num onReceive =
 onInstructionsReceived :: Nickname -> Broadcast Protocol -> EventFunc
 onInstructionsReceived remoteNick instructionsReceived _ =
   onMessageDo (from remoteNick) (\IrcMessage { mMsg } ->
-      case asCTCP mMsg >>= hush . parseDccProtocol of
-         Just p -> broadcast instructionsReceived p
-         Nothing -> return ())
+      case doIfCtcp parseDccProtocol mMsg of
+         Right p -> broadcast instructionsReceived p
+         _ -> return ())

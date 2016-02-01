@@ -15,21 +15,21 @@ module Irc ( IrcIO
            , and
            , msgHasPrefix
            , logMsg
-           , sendMsgTo
            ) where
 
 import           Control.Concurrent.Broadcast (Broadcast, broadcast, listen)
 import qualified Control.Concurrent.Broadcast as Broadcast (new)
 import           Control.Error
-import           Control.Monad
+import           Control.Monad                (replicateM, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ReaderT)
 import           Data.ByteString.Char8        hiding (length, map, zip)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
 import           Data.IP                      (IPv4)
-import           Data.Monoid
-import           Prelude                      hiding (and, putStrLn)
+import           Data.Monoid                  ((<>))
+import           Prelude                      hiding (and)
+import           System.Console.Concurrent    (outputConcurrent)
 import           System.IO.Error              (ioeGetErrorString)
 
 import           Network.SimpleIRC
@@ -71,11 +71,6 @@ connectTo network nick chans withDebug onConnected onJoined =
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"
 
-sendMsgTo :: Connection -> Nickname -> ByteString -> IO ()
-sendMsgTo connection remoteNick message = sendCmd connection msg
-  where recipient = pack remoteNick
-        msg = MPrivmsg recipient message
-
 onJoin :: Channel -> Broadcast () -> EventFunc
 onJoin channel notifyJoined connection ircMessage =
   do curNick <- getNickname connection
@@ -84,9 +79,12 @@ onJoin channel notifyJoined connection ircMessage =
 
 logMsg :: EventFunc
 logMsg _ IrcMessage { mOrigin = Just origin, mCode, mMsg } =
-    putStrLn $ mCode <> " " <> origin <>": " <> mMsg
+    outputConcurrentBs (mCode <> " " <> origin <>": " <> mMsg <> "\n")
 logMsg _ IrcMessage { mCode, mMsg } =
-    putStrLn $ mCode <> ": " <> mMsg
+    outputConcurrentBs (mCode <> ": " <> mMsg <> "\n")
+
+outputConcurrentBs :: ByteString -> IO ()
+outputConcurrentBs = outputConcurrent . unpack
 
 onMessageDo :: (a -> Bool) -> (a -> IO ()) -> a -> IO ()
 onMessageDo predicate f x = when (predicate x) $ f x

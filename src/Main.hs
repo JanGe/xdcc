@@ -14,6 +14,8 @@ import qualified Data.CaseInsensitive         as CI (mk)
 import           Data.IP                      (IPv4)
 import           Options.Applicative
 import           System.Console.AsciiProgress hiding (Options)
+import           System.Console.Concurrent    (outputConcurrent,
+                                               withConcurrentOutput)
 import           System.IO                    (hFlush, stdout)
 import           System.Random                (randomRIO)
 
@@ -56,14 +58,15 @@ options defaultNick = Options
                <> help "Enable verbose mode: verbosity level \"debug\"")
 
 main :: IO ()
-main = do defaultNick <- randomNick
+main = withConcurrentOutput $
+       do defaultNick <- randomNick
           opts <- execParser (info (helper <*> options defaultNick) (
                       fullDesc
                       <> progDesc "Download files from IRC XDCC channels"
                       <> header "xdcc - an XDCC file downloader" ))
           result <- runExceptT $ runWith opts
           case result of
-            Left e -> putStrLn $ "FAILURE xdcc: " ++ e
+            Left e -> outputConcurrent ("FAILURE xdcc: " ++ e ++ "\n")
             Right _ -> return ()
   where randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
@@ -90,20 +93,19 @@ withContext Options {..} f con = f Context { connection = con
 connectAndJoin :: Network -> Nickname -> [Channel] -> Bool
                   -> ExceptT String IO Connection
 connectAndJoin network nick chans withDebug =
-  do lift $ putStr $ "Connecting to " ++ network ++ " as " ++ nick ++ "… "
-     lift $ hFlush stdout
+  do lift $ outputConcurrent ("Connecting to " ++ network ++ " as " ++ nick ++ "… ")
      connectTo network nick chans withDebug (
-       putStrLn "Connected.") (
-       putStrLn $ "Joined " ++ show chans ++ ".")
+       outputConcurrent "Connected.\n") (
+       outputConcurrent $ "Joined " ++ show chans ++ ".\n")
 
 request :: Pack -> IrcIO Protocol
 request pack =
   do rNick <- asks remoteNick
-     liftIO $ putStrLn $ "Requesting pack #" ++ show pack ++ " from "
-                      ++ rNick ++ ", awaiting instructions…"
+     liftIO $ outputConcurrent ("Requesting pack #" ++ show pack ++ " from "
+                              ++ rNick ++ ", awaiting instructions…\n")
      requestFile pack (\f ->
-       putStrLn ( "Received instructions for file " ++ show (fileName f)
-               ++ " of size " ++ show (fileSize f) ++ " bytes." ))
+       outputConcurrent ( "Received instructions for file " ++ show (fileName f)
+                       ++ " of size " ++ show (fileSize f) ++ " bytes.\n" ))
 
 downloadWith :: Protocol -> IrcIO ()
 downloadWith p = do c <- ask
