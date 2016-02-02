@@ -75,16 +75,17 @@ resumeFile (ReverseDcc f ip t) c onChunk pos = do
           do outputConcurrent ("Resuming file at " ++ show pos ++ "…\n")
              downloadToFile file onChunk (fromIntegral pos) con))
 
+withFileAppending :: FilePath -> (File -> IO a) -> IO a
 withFileAppending fn = withFileAsOutputExt fn AppendMode NoBuffering
 
-withActiveSocket :: IPv4 -> PortNumber -> (Socket -> IO a) -> IO ()
+withActiveSocket :: IPv4 -> PortNumber -> (Socket -> IO ()) -> IO ()
 withActiveSocket ip port onConnected = withSocketsDo $ do
     sock <- socket AF_INET Stream defaultProtocol
     connect sock (sockAddr ip port)
     onConnected sock
     sClose sock
 
-withPassiveSocket :: IPv4 -> (PortNumber -> IO a) -> (Socket -> IO b) -> IO ()
+withPassiveSocket :: IPv4 -> (PortNumber -> IO ()) -> (Socket -> IO ()) -> IO ()
 withPassiveSocket ip onListen onConnected = withSocketsDo $ do
     sock <- socket AF_INET Stream defaultProtocol
     bind sock $ SockAddrInet aNY_PORT iNADDR_ANY
@@ -115,7 +116,7 @@ sendResumeRequest p pos =
        liftIO $ changeEvents connection
            [ Privmsg (onResumeAccepted p remoteNick receivedAcceptMsg)
            , Notice logMsg ]
-       liftIO $ sendMsg c (resumeCmd p remoteNick pos)
+       liftIO $ sendMsg c (resumeCmd p pos)
        ackPos <- liftIO $ Broadcast.listenTimeout receivedAcceptMsg 30000000
        lift $ failWith "Resume was not accepted in time." ackPos
 
@@ -128,12 +129,12 @@ onResumeAccepted p remoteNick resumeAccepted _ =
 
 canResumeFrom :: Protocol -> IrcIO Integer
 canResumeFrom p =
-    do curSize <- liftIO $ getFileSizeSafe file
+    do curSize <- liftIO $ getFileSizeSafe (fileName file)
        case curSize of
          Just s
-           | s < totalSize ->
+           | s < fileSize file ->
                do liftIO $ outputConcurrent ( "Resumable file found with size "
-                                         ++ show curSize ++ ".\n")
+                                           ++ show s ++ ".\n")
                   sendResumeRequest p s
            | otherwise ->
                lift $ throwE "File already exists and seems complete."
@@ -141,9 +142,7 @@ canResumeFrom p =
              do liftIO $ outputConcurrent ( "No resumable file found, starting "
                                          ++ "from zero.\n" :: String)
                 return 0
-  where file = fileName (fileMetadata p)
-        totalSize = fileSize (fileMetadata p)
-        size = fromIntegral . Files.fileSize
+  where file = fileMetadata p
 
 getFileSizeSafe :: FilePath -> IO (Maybe Integer)
 getFileSizeSafe file =
@@ -172,11 +171,11 @@ sendNumReceived sock num = sendAll sock $ toNetworkByteOrder num
 toNetworkByteOrder :: Int -> ByteString
 toNetworkByteOrder = Lazy.toStrict . runPut . putWord32be . fromIntegral
 
-resumeCmd :: Protocol -> Nickname -> Integer -> ByteString
-resumeCmd p remoteNick pos = asCtcpMsg (resumeMsgParams p pos)
+resumeCmd :: Protocol -> Integer -> ByteString
+resumeCmd p pos = asCtcpMsg (resumeMsgParams p pos)
 
 offerPassiveSink :: Context -> FileMetadata -> Token -> PortNumber -> ByteString
-offerPassiveSink Context { publicIp = Just ip, remoteNick} f t port =
+offerPassiveSink Context { publicIp = Just ip} f t port =
     asCtcpMsg (sendMsgParams f t ip port)
 offerPassiveSink _ _ _ _ = undefined
 

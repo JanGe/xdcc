@@ -16,7 +16,6 @@ import           Options.Applicative
 import           System.Console.AsciiProgress hiding (Options)
 import           System.Console.Concurrent    (outputConcurrent,
                                                withConcurrentOutput)
-import           System.IO                    (hFlush, stdout)
 import           System.Random                (randomRIO)
 
 data Options = Options { network            :: Network
@@ -129,9 +128,10 @@ newDownloadBar f =
   where barFormat = cap 30 (fileName f) ++ " [:bar] :percent (:current/:total)"
 
 cap :: Int -> String -> String
-cap maxLength string | length string > maxLength && maxLength > 1
-                       = take (maxLength - 1) string ++ "…"
-cap _         string   = string
+cap maxLength string
+    | length string > maxLength && maxLength > 1
+                = take (maxLength - 1) string ++ "…"
+    | otherwise = string
 
 bracket :: (Monad m) =>
            ExceptT e m a -> (a -> ExceptT e m b) -> (a -> ExceptT e m c)
@@ -139,5 +139,5 @@ bracket :: (Monad m) =>
 bracket acquire release apply = do
   r <- acquire
   z <- lift $ runExceptT $ apply r
-  release r
+  _ <- release r
   hoistEither z

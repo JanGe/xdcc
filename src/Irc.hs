@@ -20,7 +20,7 @@ module Irc ( IrcIO
 import           Control.Concurrent.Broadcast (Broadcast, broadcast, listen)
 import qualified Control.Concurrent.Broadcast as Broadcast (new)
 import           Control.Error
-import           Control.Monad                (replicateM, when)
+import           Control.Monad                (when)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ReaderT)
 import           Data.ByteString.Char8        hiding (length, map, zip)
@@ -48,25 +48,26 @@ data Context = Context { connection :: Connection
                        , publicIp   :: Maybe IPv4 }
 
 config :: Network -> Nickname -> [(Channel, Broadcast ())] -> IrcConfig
-config network name allChannelsJoined = (mkDefaultConfig network name) {
-          cChannels = map (CI.original . fst) allChannelsJoined,
-          cEvents   = map (\(channel, broadcast) ->
-                              Join $ onJoin channel broadcast) allChannelsJoined
-        }
+config network nick chansWithBroadcasts = (mkDefaultConfig network nick)
+    { cChannels = map (CI.original . fst) chansWithBroadcasts
+    , cEvents   = map asOnJoinEvent chansWithBroadcasts }
+  where asOnJoinEvent (chan, b) = Join (onJoin chan b)
 
 connectTo :: Network -> Nickname -> [Channel] -> Bool -> IO () -> IO ()
              -> ExceptT String IO Connection
 connectTo network nick chans withDebug onConnected onJoined =
-  do channelsJoinedEvents <- lift $ replicateM (length chans) Broadcast.new
-     let allChannelsJoined = zip chans channelsJoinedEvents
-     let config' = config network nick allChannelsJoined
+  do chansWithBroadcasts <- lift $ mapM attachBroadcast chans
+     let config' = config network nick chansWithBroadcasts
      maybeConnected <- lift $ connect config' True withDebug
-     connection <- hoistEither $ catchEither maybeConnected
-                                             (Left . ioeGetErrorString)
+     connection <- hoistEither (catchEither maybeConnected
+                                            (Left . ioeGetErrorString))
      lift onConnected
-     lift $ mapM_ listen $ snd <$> allChannelsJoined
+     lift $ waitForAll (map snd chansWithBroadcasts)
      lift onJoined
      return connection
+  where attachBroadcast chan = do b <- Broadcast.new
+                                  return (chan, b)
+        waitForAll = mapM_ listen
 
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"
