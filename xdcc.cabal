@@ -2,15 +2,15 @@ name:                 xdcc
 version:              1.0.0
 synopsis:             An XDCC file downloader
 description:          Download files from IRC XDCC channels
--- license:
--- license-file:
-homepage:
+license:              MIT
+license-file:         LICENSE
+homepage:             https://github.com/JanGe/xdcc
+bug-reports:          https://github.com/JanGe/xdcc/issues
 author:               Jan Gerlinger
 maintainer:           git@jangerlinger.de
 category:             Network
 -- copyright:
 build-type:           Simple
--- extra-source-files:
 cabal-version:        >=1.10
 
 executable xdcc
@@ -21,7 +21,6 @@ executable xdcc
                       , Dcc.Types
                       , Dcc.Parser
                       , Xdcc
-  -- other-extensions:
   build-depends:        base >= 4.7 && < 5
                       , ascii-progress
                       , binary
