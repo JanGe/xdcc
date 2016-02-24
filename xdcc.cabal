@@ -18,8 +18,6 @@ executable xdcc
   main-is:              Main.hs
   other-modules:        Irc
                       , Dcc
-                      , Dcc.Types
-                      , Dcc.Parser
                       , Xdcc
   build-depends:        base >= 4.7 && < 5
                       , ascii-progress
@@ -33,8 +31,10 @@ executable xdcc
                       , io-streams
                       , iproute
                       , irc-ctcp
+                      , irc-dcc
                       , network
                       , optparse-applicative
+                      , path
                       , polyparse
                       , random
                       , simpleirc
@@ -49,8 +49,6 @@ test-suite xdcc-unit-tests
   main-is:              Test.hs
   other-modules:        Irc
                       , Dcc
-                      , Dcc.Types
-                      , Dcc.Parser
   build-depends:        base >= 4.7 && < 5
                       , binary
                       , bytestring

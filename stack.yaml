@@ -1,6 +1,7 @@
-resolver: lts-5.1
+resolver: lts-5.2
 packages:
 - '.'
+- '../irc-dcc'
 extra-deps:
 - concurrent-extra-0.7.0.10
 - simpleirc-0.3.1
