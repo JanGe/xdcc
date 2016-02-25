@@ -69,7 +69,7 @@ options defaultNick = info ( helper <*> opts )
              <> help "Enable verbose mode: verbosity level \"debug\"" )
 
 main :: IO ()
-main = withConcurrentOutput $
+main = withConcurrentOutput . displayConsoleRegions $
        do defaultNick <- randomNick
           opts <- execParser $ options defaultNick
           result <- runExceptT $ runWith opts
@@ -126,7 +126,7 @@ withProgressBar :: FileMetadata
                 -> ((FileOffset -> IO ()) -> ExceptT String IO ())
                 -> ExceptT String IO ()
 withProgressBar file pos f = do
-    progressBar <- liftIO $ displayConsoleRegions $ do
+    progressBar <- liftIO $ do
                       progressBar <- newProgressBar opts
                       tickN' progressBar pos
                       return progressBar
