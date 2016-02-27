@@ -9,25 +9,30 @@ module Irc ( IrcIO
            , Channel
            , Pack
            , connectTo
+           , sendAndWaitForAck
+           , send
            , disconnectFrom
-           , onMessageDo
+           , onMessage
+           , onCtcpMessage
            , from
            , and
            , msgHasPrefix
            , logMsg
            ) where
 
-import           Control.Concurrent.Broadcast (Broadcast, broadcast, listen)
-import qualified Control.Concurrent.Broadcast as Broadcast (new)
+import           Control.Concurrent.Broadcast (Broadcast, broadcast)
+import qualified Control.Concurrent.Broadcast as Broadcast (listenTimeout, new)
 import           Control.Error
-import           Control.Monad                (when)
+import           Control.Monad                (replicateM, when)
+import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ReaderT)
+import           Control.Monad.Trans.Reader   (ReaderT, ask)
 import           Data.ByteString.Char8        hiding (length, map, zip)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
 import           Data.IP                      (IPv4)
 import           Data.Monoid                  ((<>))
+import           Network.IRC.CTCP             (CTCPByteString, asCTCP)
 import           Prelude                      hiding (and)
 import           System.Console.Concurrent    (outputConcurrent)
 import           System.IO.Error              (ioeGetErrorString)
@@ -56,26 +61,45 @@ config network nick chansWithBroadcasts = (mkDefaultConfig network nick)
 connectTo :: Network -> Nickname -> [Channel] -> Bool -> IO () -> IO ()
              -> ExceptT String IO Connection
 connectTo network nick chans withDebug onConnected onJoined =
-  do chansWithBroadcasts <- lift $ mapM attachBroadcast chans
-     let config' = config network nick chansWithBroadcasts
-     maybeConnected <- lift $ connect config' True withDebug
-     connection <- hoistEither (catchEither maybeConnected
-                                            (Left . ioeGetErrorString))
+  do bcs <- lift $ replicateM (length chans) Broadcast.new
+     conMaybe <- lift $ connect (config' bcs) True withDebug
+     con <- hoistEither (catchEither conMaybe (Left . ioeGetErrorString))
      lift onConnected
-     lift $ waitForAll (map snd chansWithBroadcasts)
-     lift onJoined
-     return connection
-  where attachBroadcast chan = do b <- Broadcast.new
-                                  return (chan, b)
-        waitForAll = mapM_ listen
+     joined <- lift $ waitForAll bcs
+     case sequence joined of
+       Just _ -> do lift onJoined
+                    return con
+       Nothing -> throwE "Timeout when waiting on joining all channels."
+  where config' bcs = config network nick (chans `zip` bcs)
+
+waitForAll :: [Broadcast ()] -> IO [Maybe ()]
+waitForAll = mapM (`Broadcast.listenTimeout` 30000000)
+
+sendAndWaitForAck :: ByteString -> (Broadcast b -> EventFunc) -> String
+                  -> IrcIO b
+sendAndWaitForAck cmd broadCastIfMsg errMsg =
+    do c <- ask
+       bc <- liftIO Broadcast.new
+       v <- liftIO $ do changeEvents (connection c)
+                                     [ Privmsg (broadCastIfMsg bc)
+                                     , Notice logMsg ]
+                        send c cmd
+                        Broadcast.listenTimeout bc 30000000
+       lift $ failWith errMsg v
+
+send :: Context -> ByteString -> IO ()
+send Context { connection, remoteNick } msg =
+    do sendCmd connection command
+       outputConcurrent (show command ++ "\n")
+  where command = MPrivmsg (pack remoteNick) msg
 
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"
 
 onJoin :: Channel -> Broadcast () -> EventFunc
-onJoin channel notifyJoined connection ircMessage =
-  do curNick <- getNickname connection
-     onMessageDo (for curNick `and` msgEqCi channel) (\_ ->
+onJoin channel notifyJoined con ircMessage =
+  do curNick <- getNickname con
+     onMessage (for curNick `and` msgEqCi channel) (\_ ->
             broadcast notifyJoined ()) ircMessage
 
 logMsg :: EventFunc
@@ -87,8 +111,17 @@ logMsg _ IrcMessage { mCode, mMsg } =
 outputConcurrentBs :: ByteString -> IO ()
 outputConcurrentBs = outputConcurrent . unpack
 
-onMessageDo :: (a -> Bool) -> (a -> IO ()) -> a -> IO ()
-onMessageDo predicate f x = when (predicate x) $ f x
+onMessage :: (a -> Bool)
+          -> (a -> IO ())
+          -> a
+          -> IO ()
+onMessage p f x = when (p x) $ f x
+
+onCtcpMessage :: (IrcMessage -> Bool)
+              -> (CTCPByteString -> IO ())
+              -> IrcMessage
+              -> IO ()
+onCtcpMessage p f = onMessage p (sequence_ . fmap f . asCTCP . mMsg)
 
 for :: ByteString -> IrcMessage -> Bool
 for nick IrcMessage { mNick = Just recipient } = nick == recipient

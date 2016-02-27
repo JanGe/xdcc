@@ -138,14 +138,14 @@ withProgressBar file pos f = do
         format = cap 30 (fromRelFile (fileName file))
               ++ " [:bar] :percent (:current/:total)"
 
-tickN' :: ProgressBar -> FileOffset -> IO ()
+tickN' :: Integral a => ProgressBar -> a -> IO ()
 tickN' p = tickN p . fromIntegral
 
 cap :: Int -> String -> String
-cap maxLength string
-    | length string > maxLength && maxLength > 1
-                = take (maxLength - 1) string ++ "…"
-    | otherwise = string
+cap bound s
+  | length s > bound && bound > 1
+              = take (bound - 1) s ++ "…"
+  | otherwise = s
 
 bracket :: (Monad m) =>
            ExceptT e m a -> (a -> ExceptT e m b) -> (a -> ExceptT e m c)
