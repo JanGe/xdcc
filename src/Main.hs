@@ -109,17 +109,17 @@ connectAndJoin network nick chans withDebug = do
         (outputConcurrent "Connected.\n")
         (outputConcurrent $ "Joined " ++ show chans ++ ".\n")
 
-download :: Offer -> IrcIO ()
-download o@(Offer _ f) = do
+download :: OfferFile -> IrcIO ()
+download o@(OfferFile _ f) = do
     c <- ask
     lift $ withProgressBar f 0 $
         acceptFile o (offerSink o c)
 
-resume :: Offer -> FileOffset -> IrcIO ()
-resume o@(Offer tt f) pos = do
+resume :: OfferFile -> FileOffset -> IrcIO ()
+resume o@(OfferFile tt f) pos = do
     c <- ask
     lift $ withProgressBar f pos $
-        resumeFile (AcceptResume tt f pos) (offerSink o c)
+        resumeFile (AcceptResumeFile tt f pos) (offerSink o c)
 
 withProgressBar :: FileMetadata
                 -> FileOffset

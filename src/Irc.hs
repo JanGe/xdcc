@@ -11,7 +11,7 @@ module Irc ( IrcIO
            , EventFunc
            , connectTo
            , sendAndWaitForAck
-           , send
+           , sendCommand
            , disconnectFrom
            , onMessage
            , onCtcpMessage
@@ -33,7 +33,9 @@ import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
 import           Data.IP                      (IPv4)
 import           Data.Monoid                  ((<>))
-import           Network.IRC.CTCP             (CTCPByteString, asCTCP)
+import           Network.IRC.CTCP             (CTCPByteString, asCTCP,
+                                               getUnderlyingByteString)
+import           Network.IRC.DCC              (CtcpCommand (encodeCtcp))
 import           Prelude                      hiding (and)
 import           System.Console.Concurrent    (outputConcurrent)
 import           System.IO.Error              (ioeGetErrorString)
@@ -76,7 +78,8 @@ connectTo network nick chans withDebug onConnected onJoined =
 waitForAll :: [Broadcast ()] -> IO [Maybe ()]
 waitForAll = mapM (`Broadcast.listenTimeout` 30000000)
 
-sendAndWaitForAck :: ByteString -> (Broadcast b -> EventFunc) -> String
+sendAndWaitForAck :: CtcpCommand a
+                  => a -> (Broadcast b -> EventFunc) -> String
                   -> IrcIO b
 sendAndWaitForAck cmd broadCastIfMsg errMsg =
     do c <- ask
@@ -84,15 +87,19 @@ sendAndWaitForAck cmd broadCastIfMsg errMsg =
        v <- liftIO $ do changeEvents (connection c)
                                      [ Privmsg (broadCastIfMsg bc)
                                      , Notice logMsg ]
-                        send c cmd
+                        sendCommand c cmd
                         Broadcast.listenTimeout bc 30000000
        lift $ failWith errMsg v
 
-send :: Context -> ByteString -> IO ()
-send Context { connection, remoteNick } msg =
-    do sendCmd connection command
+send :: Connection -> Nickname -> ByteString -> IO ()
+send con rNick msg =
+    do sendCmd con command
        outputConcurrent (show command ++ "\n")
-  where command = MPrivmsg (pack remoteNick) msg
+  where command = MPrivmsg (pack rNick) msg
+
+sendCommand :: CtcpCommand a => Context -> a -> IO ()
+sendCommand Context {connection, remoteNick} cmd =
+    send connection remoteNick (getUnderlyingByteString (encodeCtcp cmd))
 
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"

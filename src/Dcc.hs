@@ -14,8 +14,6 @@ import           Control.Error
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (asks)
-import           Data.ByteString.Char8        (ByteString)
-import           Network.IRC.CTCP             (getUnderlyingByteString)
 import           Network.IRC.DCC
 import           Network.IRC.DCC.FileTransfer
 import           Network.Socket               (PortNumber)
@@ -26,23 +24,24 @@ import           System.Posix.Files           (fileExist, getFileStatus,
                                                isRegularFile)
 import qualified System.Posix.Files           as Files (fileSize)
 
-sendResumeRequest :: Offer -> FileOffset -> IrcIO FileOffset
-sendResumeRequest (Offer tt f) pos =
-    let tryResume = TryResume tt f pos in
+sendResumeRequest :: OfferFile -> FileOffset -> IrcIO FileOffset
+sendResumeRequest (OfferFile tt f) pos =
+    let tryResume = TryResumeFile tt f pos in
     do rNick <- asks remoteNick
-       sendAndWaitForAck (resumeCmd tryResume)
+       sendAndWaitForAck tryResume
                          (onResumeAccepted tryResume rNick)
                          "Timeout when waiting for resume"
 
-onResumeAccepted :: TryResume -> Nickname -> Broadcast FileOffset -> EventFunc
+onResumeAccepted :: TryResumeFile -> Nickname -> Broadcast FileOffset
+                 -> EventFunc
 onResumeAccepted t rNick resumeAccepted _ =
     onCtcpMessage (from rNick) (\ msg ->
         case runParser (decodeAcceptResume t) msg of
-          Right (AcceptResume _ _ pos) -> broadcast resumeAccepted pos
+          Right (AcceptResumeFile _ _ pos) -> broadcast resumeAccepted pos
           Left e -> outputConcurrent e )
 
-canResume :: Offer -> IrcIO (Maybe FileOffset)
-canResume o@(Offer _ (FileMetadata fn (Just fs))) =
+canResume :: OfferFile -> IrcIO (Maybe FileOffset)
+canResume o@(OfferFile _ (FileMetadata fn (Just fs))) =
     do curSize <- liftIO $ getFileSizeSafe (fromRelFile fn)
        case curSize of
          Just s
@@ -68,18 +67,14 @@ getFileSizeSafe file =
                      else return Nothing
           else return Nothing
 
-resumeCmd :: TryResume -> ByteString
-resumeCmd = getUnderlyingByteString . encodeTryResume
-
-offerSink :: Offer -> Context -> PortNumber -> ExceptT String IO ()
-offerSink (Offer tt f) c p =
+offerSink :: OfferFile -> Context -> PortNumber -> ExceptT String IO ()
+offerSink (OfferFile (Passive _ t) f) c p =
     case publicIp c of
-      Just i -> lift $ sequence_ (send c <$> offerSinkCmd (OfferSink tt f i p))
+      Just i -> lift $ sendCommand c (OfferFileSink t f i p)
       Nothing -> throwE ( "Passive connections are only supported, if you "
                        ++ "provide your external IP address on the command "
                        ++ "line using the '--publicIp' option. You could "
                        ++ "also try something like: "
                        ++ "'--publicIP `curl -s https://4.ifcfg.me`'." )
-
-offerSinkCmd :: OfferSink -> Maybe ByteString
-offerSinkCmd os = getUnderlyingByteString <$> encodeOfferSink os
+-- Only passive connections can offer a sink to connect to
+offerSink _ _ _ = lift $ return ()
