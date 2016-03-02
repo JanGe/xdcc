@@ -131,12 +131,15 @@ withProgressBar file pos f = do
                       tickN' progressBar pos
                       return progressBar
     f (tickN' progressBar)
-  where opts = def { pgTotal = fromIntegral (fileSize file)
-                   , pgWidth = 100
-                   , pgFormat = format
-                   , pgOnCompletion = Just $ format ++ " Done." }
+  where opts =
+            def { pgTotal = maybe 0 fromIntegral (fileSize file)
+                , pgWidth = 100
+                , pgFormat = maybe formatUnknown (const format) (fileSize file)
+                , pgOnCompletion = Just $ format ++ " Done." }
         format = cap 30 (fromRelFile (fileName file))
               ++ " [:bar] :percent (:current/:total)"
+        formatUnknown = cap 30 (fromRelFile (fileName file))
+              ++ " [:bar] (:current/unknown)"
 
 tickN' :: Integral a => ProgressBar -> a -> IO ()
 tickN' p = tickN p . fromIntegral

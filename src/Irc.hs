@@ -8,6 +8,7 @@ module Irc ( IrcIO
            , Nickname
            , Channel
            , Pack
+           , EventFunc
            , connectTo
            , sendAndWaitForAck
            , send

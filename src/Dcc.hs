@@ -1,4 +1,6 @@
-module Dcc ( FileMetadata (..)
+module Dcc ( module Irc
+           , module Network.IRC.DCC
+           , FileMetadata (..)
            , canResume
            , resumeFile
            , acceptFile
@@ -7,9 +9,6 @@ module Dcc ( FileMetadata (..)
 
 import           Irc
 
-import           Network.IRC.DCC
-import           Network.IRC.DCC.FileTransfer
-
 import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import           Control.Error
 import           Control.Monad.IO.Class       (liftIO)
@@ -17,6 +16,8 @@ import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (asks)
 import           Data.ByteString.Char8        (ByteString)
 import           Network.IRC.CTCP             (getUnderlyingByteString)
+import           Network.IRC.DCC
+import           Network.IRC.DCC.FileTransfer
 import           Network.Socket               (PortNumber)
 import           Path                         (fromRelFile)
 import           Prelude                      hiding (length, null)
@@ -24,8 +25,6 @@ import           System.Console.Concurrent    (outputConcurrent)
 import           System.Posix.Files           (fileExist, getFileStatus,
                                                isRegularFile)
 import qualified System.Posix.Files           as Files (fileSize)
-
-import           Network.SimpleIRC            (EventFunc)
 
 sendResumeRequest :: Offer -> FileOffset -> IrcIO FileOffset
 sendResumeRequest (Offer tt f) pos =
@@ -43,7 +42,7 @@ onResumeAccepted t rNick resumeAccepted _ =
           Left e -> outputConcurrent e )
 
 canResume :: Offer -> IrcIO (Maybe FileOffset)
-canResume o@(Offer _ (FileMetadata fn fs)) =
+canResume o@(Offer _ (FileMetadata fn (Just fs))) =
     do curSize <- liftIO $ getFileSizeSafe (fromRelFile fn)
        case curSize of
          Just s
@@ -57,6 +56,7 @@ canResume o@(Offer _ (FileMetadata fn fs)) =
              do liftIO $ outputConcurrent
                            "No resumable file found, starting from zero.\n"
                 return Nothing
+canResume _ = lift $ throwE "File already exists. Resuming not supported."
 
 getFileSizeSafe :: FilePath -> IO (Maybe FileOffset)
 getFileSizeSafe file =
