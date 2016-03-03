@@ -2,7 +2,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Irc ( IrcIO
-           , Context (..)
            , Connection
            , Network
            , Nickname
@@ -25,13 +24,10 @@ import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import qualified Control.Concurrent.Broadcast as Broadcast (listenTimeout, new)
 import           Control.Error
 import           Control.Monad                (replicateM, when)
-import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ReaderT, ask)
 import           Data.ByteString.Char8        hiding (length, map, zip)
 import           Data.CaseInsensitive         (CI)
 import qualified Data.CaseInsensitive         as CI
-import           Data.IP                      (IPv4)
 import           Data.Monoid                  ((<>))
 import           Network.IRC.CTCP             (CTCPByteString, asCTCP)
 import           Prelude                      hiding (and)
@@ -44,14 +40,9 @@ type Network = String
 type Nickname = String
 type Channel = CI String
 type Pack = Int
-
 type Connection = MIrc
 
-type IrcIO a = ReaderT Context (ExceptT String IO) a
-
-data Context = Context { connection :: Connection
-                       , remoteNick :: Nickname
-                       , publicIp   :: Maybe IPv4 }
+type IrcIO = ExceptT String IO
 
 config :: Network -> Nickname -> [(Channel, Broadcast ())] -> IrcConfig
 config network nick chansWithBroadcasts = (mkDefaultConfig network nick)
@@ -60,11 +51,10 @@ config network nick chansWithBroadcasts = (mkDefaultConfig network nick)
   where asOnJoinEvent (chan, b) = Join (onJoin chan b)
 
 connectTo :: Network -> Nickname -> [Channel] -> Bool -> IO () -> IO ()
-             -> ExceptT String IO Connection
+          -> IrcIO Connection
 connectTo network nick chans withDebug onConnected onJoined =
   do bcs <- lift $ replicateM (length chans) Broadcast.new
-     conMaybe <- lift $ connect (config' bcs) True withDebug
-     con <- hoistEither (catchEither conMaybe (Left . ioeGetErrorString))
+     con <- connect' (config' bcs) withDebug
      lift onConnected
      joined <- lift $ waitForAll bcs
      case sequence joined of
@@ -73,26 +63,34 @@ connectTo network nick chans withDebug onConnected onJoined =
        Nothing -> throwE "Timeout when waiting on joining all channels."
   where config' bcs = config network nick (chans `zip` bcs)
 
+connect' :: IrcConfig -> Bool -> IrcIO Connection
+connect' conf withDebug =
+    do con <- lift $ hoistEither <$> connect conf True withDebug
+       catchE con (throwE . ioeGetErrorString)
+
 waitForAll :: [Broadcast ()] -> IO [Maybe ()]
 waitForAll = mapM (`Broadcast.listenTimeout` 30000000)
 
-sendAndWaitForAck :: ByteString -> (Broadcast b -> EventFunc) -> String
+sendAndWaitForAck :: Connection
+                  -> Nickname
+                  -> ByteString
+                  -> (Nickname -> Broadcast b -> EventFunc)
+                  -> String
                   -> IrcIO b
-sendAndWaitForAck cmd broadCastIfMsg errMsg =
-    do c <- ask
-       bc <- liftIO Broadcast.new
-       v <- liftIO $ do changeEvents (connection c)
-                                     [ Privmsg (broadCastIfMsg bc)
-                                     , Notice logMsg ]
-                        send c cmd
-                        Broadcast.listenTimeout bc 30000000
-       lift $ failWith errMsg v
+sendAndWaitForAck con rNick cmd broadCastIfMsg errMsg =
+    do bc <- lift Broadcast.new
+       v <- lift $ do changeEvents con
+                                   [ Privmsg (broadCastIfMsg rNick bc)
+                                   , Notice logMsg ]
+                      send con rNick cmd
+                      Broadcast.listenTimeout bc 30000000
+       failWith errMsg v
 
-send :: Context -> ByteString -> IO ()
-send Context {connection, remoteNick} msg =
-    do sendCmd connection command
+send :: Connection -> Nickname -> ByteString -> IO ()
+send con rNick msg =
+    do sendCmd con command
        outputConcurrent (show command ++ "\n")
-  where command = MPrivmsg (pack remoteNick) msg
+  where command = MPrivmsg (pack rNick) msg
 
 disconnectFrom :: Connection -> IO ()
 disconnectFrom = flip disconnect "bye"

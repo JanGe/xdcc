@@ -1,45 +1,39 @@
-{-# LANGUAGE NamedFieldPuns    #-}
-{-# LANGUAGE OverloadedStrings #-}
-
-module Xdcc ( OfferFile(..)
-            , AcceptResumeFile(..)
-            , FileMetadata(..)
-            , FileOffset
+module Xdcc ( module Dcc
             , request
-            , acceptFile
-            , canResume
-            , resumeFile
-            , offerSink
             ) where
 
 import           Dcc
 
 import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import           Control.Monad.IO.Class       (liftIO)
-import           Control.Monad.Trans.Reader   (ask, asks)
+import           Control.Monad.Trans.Class    (lift)
+import           Control.Monad.Trans.Reader   (ask)
 import           Data.ByteString.Char8        (pack)
 import           Data.Monoid                  ((<>))
-import           Network.IRC.CTCP             (encodeCTCP)
 import           System.Console.Concurrent    (outputConcurrent)
 
-request :: Pack -> IrcIO OfferFile
+request :: Pack -> DccIO OfferFile
 request p =
-  do rNick <- asks remoteNick
-     liftIO $ outputConcurrent ("Requesting pack #" ++ show p ++ " from "
-                              ++ rNick ++ ", awaiting instructions…\n")
+  do env <- ask
+     liftIO $ outputConcurrent ( "Requesting pack #" ++ show p ++ " from "
+                              ++ remoteNick env ++ ", awaiting file offer…\n" )
      o@(OfferFile _ f) <- requestFile p
-     liftIO $ outputConcurrent ( "Received instructions for file "
-                              ++ show (fileName f) ++ " of size "
-                              ++ show (fileSize f) ++ " bytes.\n" )
+     liftIO $ outputConcurrent
+                ( "Received file offer for " ++ show (fileName f)
+               ++ (case fileSize f of
+                     Just fs -> " of size " ++ show fs ++ " bytes.\n"
+                     Nothing -> ", no file size provided.\n") )
      return o
 
 -- TODO XDCC CANCEL on failure
-requestFile :: Pack -> IrcIO OfferFile
+requestFile :: Pack -> DccIO OfferFile
 requestFile num =
-    do Context { remoteNick } <- ask
-       sendAndWaitForAck ("XDCC SEND #" <> pack (show num))
-                         (onFileOfferReceived remoteNick)
-                         "Timeout when waiting for file offer."
+    do env <- ask
+       lift $ sendAndWaitForAck (connection env)
+                                (remoteNick env)
+                                (pack ("XDCC SEND #" ++ show num))
+                                onFileOfferReceived
+                                "Timeout when waiting for file offer."
 
 onFileOfferReceived :: Nickname -> Broadcast OfferFile -> EventFunc
 onFileOfferReceived rNick bc _ =

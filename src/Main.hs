@@ -40,7 +40,7 @@ options defaultNick = info ( helper <*> opts )
              <> help "Host address of the IRC network" )
           <*> ( CI.mk <$> strArgument
               ( metavar "CHANNEL"
-             <> help "Main channel to join on network" ) )
+             <> help "Main channel to join on network" ))
           <*> strArgument
               ( metavar "USER"
              <> help "Nickname of the user or bot to download from" )
@@ -81,24 +81,24 @@ randomNick :: IO String
 randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
 runWith :: Options -> ExceptT String IO ()
-runWith opts = withConnection opts $ withContext opts $
+runWith opts = withIrcConnection opts . withDccEnv opts $
       runReaderT $ do o <- request (pack opts)
                       pos <- canResume o
                       case pos of
                         Just p -> resume o p
                         Nothing -> download o
 
-withConnection :: Options -> (Connection -> ExceptT String IO a)
+withIrcConnection :: Options -> (Connection -> ExceptT String IO a)
                   -> ExceptT String IO a
-withConnection Options {..} =
+withIrcConnection Options {..} =
     bracket (connectAndJoin network nick channels verbose)
             (lift . disconnectFrom)
   where channels = mainChannel : additionalChannels
 
-withContext :: Options -> (Context -> a) -> Connection -> a
-withContext Options {..} f con = f Context { connection = con
-                                           , publicIp = publicIp
-                                           , remoteNick = rNick }
+withDccEnv :: Options -> (DccEnv -> a) -> Connection -> a
+withDccEnv Options {..} f con = f DccEnv { connection = con
+                                         , publicIp = publicIp
+                                         , remoteNick = rNick }
 
 connectAndJoin :: Network -> Nickname -> [Channel] -> Bool
                   -> ExceptT String IO Connection
@@ -109,37 +109,33 @@ connectAndJoin network nick chans withDebug = do
         (outputConcurrent "Connected.\n")
         (outputConcurrent $ "Joined " ++ show chans ++ ".\n")
 
-download :: OfferFile -> IrcIO ()
+download :: OfferFile -> DccIO ()
 download o@(OfferFile _ f) = do
-    c <- ask
+    env <- ask
     lift $ withProgressBar f 0 $
-        acceptFile o (offerSink o c)
+        acceptFile o (offerSink env o)
 
-resume :: OfferFile -> FileOffset -> IrcIO ()
+resume :: OfferFile -> FileOffset -> DccIO ()
 resume o@(OfferFile tt f) pos = do
-    c <- ask
+    env <- ask
     lift $ withProgressBar f pos $
-        resumeFile (AcceptResumeFile tt f pos) (offerSink o c)
+        resumeFile (AcceptResumeFile tt f pos) (offerSink env o)
 
 withProgressBar :: FileMetadata
                 -> FileOffset
                 -> ((FileOffset -> IO ()) -> ExceptT String IO ())
                 -> ExceptT String IO ()
 withProgressBar file pos f = do
-    progressBar <- liftIO $ do
-                      progressBar <- newProgressBar opts
-                      tickN' progressBar pos
-                      return progressBar
+    progressBar <- liftIO $ newProgressBar opts
+    liftIO $ tickN' progressBar pos
     f (tickN' progressBar)
-  where opts =
-            def { pgTotal = maybe 0 fromIntegral (fileSize file)
-                , pgWidth = 100
-                , pgFormat = maybe formatUnknown (const format) (fileSize file)
-                , pgOnCompletion = Just $ format ++ " Done." }
-        format = cap 30 (fromRelFile (fileName file))
-              ++ " [:bar] :percent (:current/:total)"
-        formatUnknown = cap 30 (fromRelFile (fileName file))
-              ++ " [:bar] (:current/unknown)"
+  where opts = def
+            { pgTotal = fromIntegral (fromMaybe maxBound (fileSize file))
+            , pgWidth = 100
+            , pgFormat = maybe formatUnknown (const format) (fileSize file) }
+        cappedFn = cap 30 (fromRelFile (fileName file))
+        format = cappedFn ++ " [:bar] :percent (:current/:total)"
+        formatUnknown = cappedFn ++ " [:bar] (:current/unknown)"
 
 tickN' :: Integral a => ProgressBar -> a -> IO ()
 tickN' p = tickN p . fromIntegral

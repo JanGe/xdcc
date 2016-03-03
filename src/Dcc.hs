@@ -1,5 +1,7 @@
 module Dcc ( module Irc
            , module Network.IRC.DCC
+           , DccIO
+           , DccEnv(..)
            , FileMetadata (..)
            , canResume
            , resumeFile
@@ -13,8 +15,9 @@ import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import           Control.Error
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (asks)
+import           Control.Monad.Trans.Reader   (ReaderT, ask)
 import           Data.ByteString.Char8        (ByteString)
+import           Data.IP                      (IPv4)
 import           Network.IRC.CTCP             (getUnderlyingByteString)
 import           Network.IRC.DCC
 import           Network.IRC.DCC.FileTransfer
@@ -26,13 +29,21 @@ import           System.Posix.Files           (fileExist, getFileStatus,
                                                isRegularFile)
 import qualified System.Posix.Files           as Files (fileSize)
 
-sendResumeRequest :: OfferFile -> FileOffset -> IrcIO FileOffset
+type DccIO = ReaderT DccEnv IrcIO
+
+data DccEnv = DccEnv { connection :: Connection
+                     , remoteNick :: Nickname
+                     , publicIp   :: Maybe IPv4 }
+
+sendResumeRequest :: OfferFile -> FileOffset -> DccIO FileOffset
 sendResumeRequest (OfferFile tt f) pos =
     let tryResume = TryResumeFile tt f pos in
-    do rNick <- asks remoteNick
-       sendAndWaitForAck (asByteString tryResume)
-                         (onResumeAccepted tryResume rNick)
-                         "Timeout when waiting for resume"
+    do env <- ask
+       lift $ sendAndWaitForAck (connection env)
+                                (remoteNick env)
+                                (asByteString tryResume)
+                                (onResumeAccepted tryResume)
+                                "Timeout when waiting for resume"
 
 onResumeAccepted :: TryResumeFile -> Nickname -> Broadcast FileOffset
                  -> EventFunc
@@ -42,22 +53,23 @@ onResumeAccepted t rNick resumeAccepted _ =
           Right (AcceptResumeFile _ _ pos) -> broadcast resumeAccepted pos
           Left e -> outputConcurrent e )
 
-canResume :: OfferFile -> IrcIO (Maybe FileOffset)
-canResume o@(OfferFile _ (FileMetadata fn (Just fs))) =
+canResume :: OfferFile -> DccIO (Maybe FileOffset)
+canResume o@(OfferFile _ (FileMetadata fn fs)) =
     do curSize <- liftIO $ getFileSizeSafe (fromRelFile fn)
-       case curSize of
-         Just s
-           | s < fs -> do
+       case (curSize, fs) of
+         (Just s, Just fs')
+           | s < fs' -> do
                liftIO $ outputConcurrent
                           ("Resumable file found with size " ++ show s ++ ".\n")
                Just <$> sendResumeRequest o s
            | otherwise ->
                lift $ throwE "File already exists and seems complete."
-         Nothing ->
+         (Just _, Nothing) ->
+             lift $ throwE "File already exists. Resuming not supported."
+         (Nothing, _) ->
              do liftIO $ outputConcurrent
                            "No resumable file found, starting from zero.\n"
                 return Nothing
-canResume _ = lift $ throwE "File already exists. Resuming not supported."
 
 getFileSizeSafe :: FilePath -> IO (Maybe FileOffset)
 getFileSizeSafe file =
@@ -69,10 +81,12 @@ getFileSizeSafe file =
                      else return Nothing
           else return Nothing
 
-offerSink :: OfferFile -> Context -> PortNumber -> ExceptT String IO ()
-offerSink (OfferFile (Passive _ t) f) c p =
-    case publicIp c of
-      Just i -> lift $ send c (asByteString (OfferFileSink t f i p))
+offerSink :: DccEnv -> OfferFile -> PortNumber -> IrcIO ()
+offerSink env (OfferFile (Passive _ t) f) p =
+    case publicIp env of
+      Just i -> lift $ send (connection env)
+                            (remoteNick env)
+                            (asByteString (OfferFileSink t f i p))
       Nothing -> throwE ( "Passive connections are only supported, if you "
                        ++ "provide your external IP address on the command "
                        ++ "line using the '--publicIp' option. You could "
