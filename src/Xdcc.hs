@@ -22,11 +22,6 @@ import           Data.Monoid                  ((<>))
 import           Network.IRC.CTCP             (encodeCTCP)
 import           System.Console.Concurrent    (outputConcurrent)
 
-data RequestPack = RequestPack Pack
-
-instance CtcpCommand RequestPack where
-    encodeCtcp (RequestPack num) = encodeCtcp $ "XDCC SEND #" <> pack (show num)
-
 request :: Pack -> IrcIO OfferFile
 request p =
   do rNick <- asks remoteNick
@@ -42,7 +37,7 @@ request p =
 requestFile :: Pack -> IrcIO OfferFile
 requestFile num =
     do Context { remoteNick } <- ask
-       sendAndWaitForAck (RequestPack num)
+       sendAndWaitForAck ("XDCC SEND #" <> pack (show num))
                          (onFileOfferReceived remoteNick)
                          "Timeout when waiting for file offer."
 

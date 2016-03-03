@@ -14,6 +14,8 @@ import           Control.Error
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (asks)
+import           Data.ByteString.Char8        (ByteString)
+import           Network.IRC.CTCP             (getUnderlyingByteString)
 import           Network.IRC.DCC
 import           Network.IRC.DCC.FileTransfer
 import           Network.Socket               (PortNumber)
@@ -28,7 +30,7 @@ sendResumeRequest :: OfferFile -> FileOffset -> IrcIO FileOffset
 sendResumeRequest (OfferFile tt f) pos =
     let tryResume = TryResumeFile tt f pos in
     do rNick <- asks remoteNick
-       sendAndWaitForAck tryResume
+       sendAndWaitForAck (asByteString tryResume)
                          (onResumeAccepted tryResume rNick)
                          "Timeout when waiting for resume"
 
@@ -70,7 +72,7 @@ getFileSizeSafe file =
 offerSink :: OfferFile -> Context -> PortNumber -> ExceptT String IO ()
 offerSink (OfferFile (Passive _ t) f) c p =
     case publicIp c of
-      Just i -> lift $ sendCommand c (OfferFileSink t f i p)
+      Just i -> lift $ send c (asByteString (OfferFileSink t f i p))
       Nothing -> throwE ( "Passive connections are only supported, if you "
                        ++ "provide your external IP address on the command "
                        ++ "line using the '--publicIp' option. You could "
@@ -78,3 +80,6 @@ offerSink (OfferFile (Passive _ t) f) c p =
                        ++ "'--publicIP `curl -s https://4.ifcfg.me`'." )
 -- Only passive connections can offer a sink to connect to
 offerSink _ _ _ = lift $ return ()
+
+asByteString :: CtcpCommand a => a -> ByteString
+asByteString = getUnderlyingByteString . encodeCtcp
