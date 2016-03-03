@@ -49,7 +49,7 @@ onResumeAccepted :: TryResumeFile -> Nickname -> Broadcast FileOffset
                  -> EventFunc
 onResumeAccepted t rNick resumeAccepted _ =
     onCtcpMessage (from rNick) (\ msg ->
-        case runParser (decodeAcceptResume t) msg of
+        case runParser (parseAcceptResumeFile t) msg of
           Right (AcceptResumeFile _ _ pos) -> broadcast resumeAccepted pos
           Left e -> outputConcurrent e )
 

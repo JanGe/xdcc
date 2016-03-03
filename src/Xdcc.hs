@@ -9,7 +9,6 @@ import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ask)
 import           Data.ByteString.Char8        (pack)
-import           Data.Monoid                  ((<>))
 import           System.Console.Concurrent    (outputConcurrent)
 
 request :: Pack -> DccIO OfferFile
@@ -38,6 +37,6 @@ requestFile num =
 onFileOfferReceived :: Nickname -> Broadcast OfferFile -> EventFunc
 onFileOfferReceived rNick bc _ =
   onCtcpMessage (from rNick)
-                (\ msg -> case runParser decodeService msg of
+                (\ msg -> case runParser parseService msg of
                             Right (FileTransfer o) -> broadcast bc o
                             _ -> return ())
