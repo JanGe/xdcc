@@ -21,41 +21,20 @@ executable xdcc
                       , Xdcc
   build-depends:        base >= 4.7 && < 5
                       , ascii-progress
-                      , binary
                       , bytestring
                       , case-insensitive
                       , concurrent-extra
                       , concurrent-output
                       , errors
-                      , filepath
-                      , io-streams
                       , iproute
                       , irc-ctcp
                       , irc-dcc
                       , network
                       , optparse-applicative
                       , path
-                      , polyparse
                       , random
                       , simpleirc
                       , transformers
                       , unix
   default-language:     Haskell2010
   ghc-options:          -Wall
-
-test-suite xdcc-unit-tests
-  hs-source-dirs:       src
-  type:                 exitcode-stdio-1.0
-  main-is:              Test.hs
-  other-modules:        Irc
-                      , Dcc
-  build-depends:        base >= 4.7 && < 5
-                      , binary
-                      , bytestring
-                      , filepath
-                      , io-streams
-                      , iproute
-                      , irc-ctcp
-                      , network
-                      , polyparse
-  default-language:     Haskell2010
