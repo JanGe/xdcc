@@ -1,7 +1,13 @@
 name:                 xdcc
 version:              1.0.0
-synopsis:             An XDCC file downloader
-description:          Download files from IRC XDCC channels
+synopsis:             A wget-like utility for retrieving files from XDCC bots on
+                      IRC
+description:          XDCC (eXtended DCC) is a protocol used by IRC bots to make
+                      files available for transfer. This utility can be used to
+                      retrieve such files.
+                      .
+                      See <https://de.wikipedia.org/wiki/XDCC> for
+                      more details.
 license:              MIT
 license-file:         LICENSE
 homepage:             https://github.com/JanGe/xdcc
