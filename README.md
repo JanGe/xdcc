@@ -5,7 +5,7 @@
 XDCC (eXtended DCC) is a protocol used by IRC bots to make files
 available for transfer. This utility can be used to retrieve such files.
 
-See https://de.wikipedia.org/wiki/XDCC for more details.
+See https://en.wikipedia.org/wiki/XDCC for more details.
 
 ### Supported DCC Variants:
 
