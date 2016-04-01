@@ -28,7 +28,7 @@ executable xdcc
                       , errors
                       , iproute
                       , irc-ctcp
-                      , irc-dcc
+                      , irc-dcc >= 1.0.0
                       , network
                       , optparse-applicative
                       , path

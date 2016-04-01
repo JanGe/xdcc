@@ -83,7 +83,9 @@ sendAndWaitForAck con rNick cmd broadCastIfMsg errMsg =
                                    [ Privmsg (broadCastIfMsg rNick bc)
                                    , Notice logMsg ]
                       send con rNick cmd
-                      Broadcast.listenTimeout bc 30000000
+                      v <- Broadcast.listenTimeout bc 30000000
+                      changeEvents con [ Notice logMsg ]
+                      return v
        failWith errMsg v
 
 send :: Connection -> Nickname -> ByteString -> IO ()
