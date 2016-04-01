@@ -33,8 +33,8 @@ options :: String -> ParserInfo Options
 options defaultNick = info ( helper <*> opts )
                            ( fullDesc
                           <> header "xdcc - an XDCC file downloader"
-                          <> progDesc "A wget-like utility for retrieving "
-                                   ++ "files from XDCC bots on IRC" )
+                          <> progDesc ( "A wget-like utility for retrieving "
+                                     ++ "files from XDCC bots on IRC" ))
   where opts = Options
           <$> strArgument
               ( metavar "HOST"
