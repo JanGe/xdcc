@@ -20,21 +20,21 @@ executable xdcc
                       , Dcc
                       , Xdcc
   build-depends:        base >= 4.7 && < 5
-                      , ascii-progress
-                      , bytestring
-                      , case-insensitive
-                      , concurrent-extra
-                      , concurrent-output
-                      , errors
-                      , iproute
-                      , irc-ctcp
-                      , irc-dcc >= 1.0.0
-                      , network
-                      , optparse-applicative
-                      , path
-                      , random
-                      , simpleirc
-                      , transformers
-                      , unix
+                      , ascii-progress >= 0.3.2.0 && < 0.4
+                      , bytestring >= 0.10.6.0 && < 0.11
+                      , case-insensitive >= 1.2.0.6 && < 1.3
+                      , concurrent-extra >= 0.7.0.10 && < 0.8
+                      , concurrent-output >= 1.7.4 && < 1.8
+                      , errors >= 2.1.2 && < 2.2
+                      , iproute >= 1.7.0 && < 1.8
+                      , irc-ctcp >= 0.1.3.0 && < 0.2
+                      , irc-dcc >= 1.0.0 && < 1.2
+                      , network >= 2.6.2.1 && < 2.7
+                      , optparse-applicative >= 0.12.1.0 && < 0.13
+                      , path >= 0.5.7 && < 0.6
+                      , random == 1.1.*
+                      , simpleirc >= 0.3.1 && < 0.4
+                      , transformers >= 0.4.2.0 && < 0.5
+                      , unix >= 2.7.1.0 && < 2.8
   default-language:     Haskell2010
   ghc-options:          -Wall
