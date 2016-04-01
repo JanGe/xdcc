@@ -7,6 +7,11 @@ available for transfer. This utility can be used to retrieve such files.
 
 See https://de.wikipedia.org/wiki/XDCC for more details.
 
+### Supported DCC Variants:
+
+* (Standard) DCC
+* Reverse DCC
+
 ## Installation
 
 1. Install [Stack](http://docs.haskellstack.org/en/stable/README/).
