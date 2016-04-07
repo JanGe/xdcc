@@ -16,8 +16,7 @@ See https://en.wikipedia.org/wiki/XDCC for more details.
 
 1. Install [Stack](http://docs.haskellstack.org/en/stable/README/).
 1. Add `~/.local/bin` to your `PATH` environment variable.
-1. Clone this repository.
-1. Run `stack install` from the root folder of this repository.
+1. Run `stack install xdcc --resolver nightly-2016-04-06`.
 
 ## Usage
 ```
