@@ -34,7 +34,7 @@ executable xdcc
                       , errors >= 2.1.2 && < 2.2
                       , iproute >= 1.7.0 && < 1.8
                       , irc-ctcp >= 0.1.3.0 && < 0.2
-                      , irc-dcc >= 1.0.0 && < 1.2
+                      , irc-dcc >= 1.2.0 && < 1.3
                       , network >= 2.6.2.1 && < 2.7
                       , optparse-applicative >= 0.12.1.0 && < 0.13
                       , path >= 0.5.7 && < 0.6

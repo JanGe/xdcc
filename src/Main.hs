@@ -12,6 +12,7 @@ import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ask, runReaderT)
 import qualified Data.CaseInsensitive         as CI (mk)
 import           Data.IP                      (IPv4)
+import           Network.Socket               (PortNumber)
 import           Options.Applicative
 import           Path                         (fromRelFile)
 import           System.Console.AsciiProgress hiding (Options)
@@ -26,6 +27,7 @@ data Options = Options { network            :: Network
                        , nick               :: Nickname
                        , additionalChannels :: [Channel]
                        , publicIp           :: Maybe IPv4
+                       , lPort              :: Maybe PortNumber
                        , verbose            :: Bool }
     deriving (Show)
 
@@ -64,6 +66,13 @@ options defaultNick = info ( helper <*> opts )
              <> metavar "IP"
              <> help ( "IPv4 address where you are reachable (only needed for "
                     ++ "Reverse DCC support)." )))
+          <*> optional ( fromIntegral <$> option auto
+              ( long "localPort"
+             <> short 'p'
+             <> metavar "LOCAL_PORT"
+             <> help ( "Local port to bind to, by default the port is selected "
+                    ++ "by the operating system (only needed for Reverse DCC "
+                    ++ "support)." )))
           <*> switch
               ( long "verbose"
              <> short 'v'
@@ -99,7 +108,8 @@ withIrcConnection Options {..} =
 withDccEnv :: Options -> (DccEnv -> a) -> Connection -> a
 withDccEnv Options {..} f con = f DccEnv { connection = con
                                          , publicIp = publicIp
-                                         , remoteNick = rNick }
+                                         , remoteNick = rNick
+                                         , localPort = lPort }
 
 connectAndJoin :: Network -> Nickname -> [Channel] -> Bool
                   -> ExceptT String IO Connection
@@ -113,14 +123,18 @@ connectAndJoin network nick chans withDebug = do
 download :: OfferFile -> DccIO ()
 download o@(OfferFile _ f) = do
     env <- ask
-    lift $ withProgressBar f 0 $
-        acceptFile o (offerSink env o)
+    lift $ withProgressBar f 0 (\onChunk ->
+        runReaderT
+            (acceptFile o (offerSink env o) onChunk)
+            (localPort env) )
 
 resume :: OfferFile -> FileOffset -> DccIO ()
 resume o@(OfferFile tt f) pos = do
     env <- ask
-    lift $ withProgressBar f pos $
-        resumeFile (AcceptResumeFile tt f pos) (offerSink env o)
+    lift $ withProgressBar f pos (\onChunk ->
+        runReaderT
+            (resumeFile (AcceptResumeFile tt f pos) (offerSink env o) onChunk)
+            (localPort env) )
 
 withProgressBar :: FileMetadata
                 -> FileOffset

@@ -33,7 +33,8 @@ type DccIO = ReaderT DccEnv IrcIO
 
 data DccEnv = DccEnv { connection :: Connection
                      , remoteNick :: Nickname
-                     , publicIp   :: Maybe IPv4 }
+                     , publicIp   :: Maybe IPv4
+                     , localPort  :: Maybe PortNumber }
 
 sendResumeRequest :: OfferFile -> FileOffset -> DccIO FileOffset
 sendResumeRequest (OfferFile tt f) pos =
