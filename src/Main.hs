@@ -24,6 +24,11 @@ data Options = Options { network            :: Network
                        , rNick              :: Nickname
                        , pack               :: Pack
                        , nick               :: Nickname
+                       , user               :: Nickname
+                       , port               :: Port
+                       , pass               :: Password
+                       , tls                :: Bool
+                       , znc                :: Bool
                        , additionalChannels :: [Channel]
                        , publicIp           :: Maybe IPv4
                        , verbose            :: Bool }
@@ -54,6 +59,29 @@ options defaultNick = info ( helper <*> opts )
              <> metavar "NAME"
              <> value defaultNick
              <> help "Nickname to use for the IRC connection" )
+          <*> strOption
+              ( long "username"
+             <> short 'u'
+             <> metavar "UNAME"
+             <> value defaultNick
+             <> help "Username to use for the IRC connection" )
+          <*> argument auto
+              ( metavar "PORT"
+             <> value 6667
+             <> help "Port to use for the IRC connection (default is 6667)" )
+          <*> optional (strOption
+              ( long "password"
+             <> short 'p'
+             <> metavar "PASS"
+             <> help "Password to use for the IRC connection" ))
+          <*> switch
+              ( long "tls"
+             <> short 't'
+             <> help "Use TLS for the IRC connection" )
+          <*> switch
+              ( long "znc"
+             <> short 'z'
+             <> help "Enable znc AUTO-CONNECT support" )
           <*> many ( CI.mk <$> strOption
               ( long "join"
              <> short 'j'
@@ -92,8 +120,8 @@ runWith opts = withIrcConnection opts . withDccEnv opts $
 withIrcConnection :: Options -> (Connection -> ExceptT String IO a)
                   -> ExceptT String IO a
 withIrcConnection Options {..} =
-    bracket (connectAndJoin network nick channels verbose)
-            (lift . disconnectFrom)
+    bracket (connectAndJoin network port pass tls nick user znc channels verbose)
+            (lift . disconnectFrom znc)
   where channels = mainChannel : additionalChannels
 
 withDccEnv :: Options -> (DccEnv -> a) -> Connection -> a
@@ -101,13 +129,14 @@ withDccEnv Options {..} f con = f DccEnv { connection = con
                                          , publicIp = publicIp
                                          , remoteNick = rNick }
 
-connectAndJoin :: Network -> Nickname -> [Channel] -> Bool
-                  -> ExceptT String IO Connection
-connectAndJoin network nick chans withDebug = do
+connectAndJoin :: Network -> Port -> Password -> Tls -> Nickname -> Nickname -> Bool
+               -> [Channel] -> Bool
+               -> ExceptT String IO Connection
+connectAndJoin network port pass tls nick user znc chans withDebug = do
     lift $
         outputConcurrent $ "Connecting to " ++ network ++ " as " ++ nick ++ "… "
-    connectTo network nick chans withDebug
-        (outputConcurrent "Connected.\n")
+    connectTo network port pass tls nick user znc chans withDebug
+        (outputConcurrent ("Connected.\n"::String))
         (outputConcurrent $ "Joined " ++ show chans ++ ".\n")
 
 download :: OfferFile -> DccIO ()

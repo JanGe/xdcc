@@ -5,6 +5,9 @@ module Irc ( IrcIO
            , Connection
            , Network
            , Nickname
+           , Password
+           , Port
+           , Tls
            , Channel
            , Pack
            , EventFunc
@@ -38,21 +41,34 @@ import           Network.SimpleIRC
 
 type Network = String
 type Nickname = String
+type Password = Maybe String
+type Port = Int
+type Tls = Bool
 type Channel = CI String
 type Pack = Int
 type Connection = MIrc
 
+
 type IrcIO = ExceptT String IO
 
-config :: Network -> Nickname -> [(Channel, Broadcast ())] -> IrcConfig
-config network nick chansWithBroadcasts = (mkDefaultConfig network nick)
+config :: Network -> Port -> Password -> Tls -> Nickname -> Nickname -> Bool
+       -> [(Channel, Broadcast ())] -> IrcConfig
+config network port pass tls nick user znc chansWithBroadcasts = (mkDefaultConfig network nick)
     { cChannels = map (CI.original . fst) chansWithBroadcasts
-    , cEvents   = map asOnJoinEvent chansWithBroadcasts }
+    , cEvents   = if znc
+                   then (Privmsg zncConnect) : (map asOnJoinEvent chansWithBroadcasts)
+                   else map asOnJoinEvent chansWithBroadcasts
+    , cPass     = pass
+    , cSecure   = tls
+    , cPort     = port
+    , cUsername = user
+    , cNick     = nick }
   where asOnJoinEvent (chan, b) = Join (onJoin chan b)
 
-connectTo :: Network -> Nickname -> [Channel] -> Bool -> IO () -> IO ()
+connectTo :: Network -> Port -> Password -> Tls -> Nickname -> Nickname -> Bool
+          -> [Channel] -> Bool -> IO () -> IO ()
           -> IrcIO Connection
-connectTo network nick chans withDebug onConnected onJoined =
+connectTo network port pass tls nick user znc chans withDebug onConnected onJoined =
   do bcs <- lift $ replicateM (length chans) Broadcast.new
      con <- connect' (config' bcs) withDebug
      lift onConnected
@@ -61,7 +77,21 @@ connectTo network nick chans withDebug onConnected onJoined =
        Just _ -> do lift onJoined
                     return con
        Nothing -> throwE "Timeout when waiting on joining all channels."
-  where config' bcs = config network nick (chans `zip` bcs)
+  where config' bcs = config network port pass tls nick user znc (chans `zip` bcs)
+
+zncConnect :: EventFunc
+zncConnect con m = do
+    if (zOrigin == "*status") && (zOrigin == zNick) &&
+        (zUser == "znc") && (zHost == "znc.in") &&
+        (zMsg == "You are currently disconnected from IRC. Use 'connect' to reconnect.")
+       then send con "*status" "connect"
+       else return ()
+  where
+    zMsg    = mMsg m
+    zUser   = maybe empty id (mUser m)
+    zNick   = maybe empty id (mNick m)
+    zOrigin = maybe empty id (mOrigin m)
+    zHost   = maybe empty id (mHost m)
 
 connect' :: IrcConfig -> Bool -> IrcIO Connection
 connect' conf withDebug =
@@ -94,8 +124,12 @@ send con rNick msg =
        outputConcurrent (show command ++ "\n")
   where command = MPrivmsg (pack rNick) msg
 
-disconnectFrom :: Connection -> IO ()
-disconnectFrom = flip disconnect "bye"
+disconnectFrom :: Bool -> Connection -> IO ()
+disconnectFrom z con =
+  do if z
+       then send con "*status" "disconnect"
+       else return ()
+     disconnect con "bye"
 
 onJoin :: Channel -> Broadcast () -> EventFunc
 onJoin channel notifyJoined con ircMessage =
