@@ -13,7 +13,7 @@ import           Control.Monad.Trans.Reader   (ask, runReaderT)
 import qualified Data.CaseInsensitive         as CI (mk)
 import           Data.IP                      (IPv4)
 import           Network.Socket               (PortNumber)
-import           Options.Applicative
+import           Options.Applicative.Extended
 import           Path                         (fromRelFile)
 import           System.Console.AsciiProgress hiding (Options)
 import           System.Console.Concurrent    (outputConcurrent,
@@ -66,13 +66,13 @@ options defaultNick = info ( helper <*> opts )
              <> metavar "IP"
              <> help ( "IPv4 address where you are reachable (only needed for "
                     ++ "Reverse DCC support)." )))
-          <*> optional ( fromIntegral <$> option auto
+          <*> optional ( option tcpPort
               ( long "localPort"
              <> short 'p'
              <> metavar "LOCAL_PORT"
-             <> help ( "Local port to bind to, by default the port is selected "
-                    ++ "by the operating system (only needed for Reverse DCC "
-                    ++ "support)." )))
+             <> help ( "Local port to bind to, default is an arbitrary port "
+                    ++ "selected by the operating system (only needed for "
+                    ++ "Reverse DCC support)." )))
           <*> switch
               ( long "verbose"
              <> short 'v'
@@ -92,11 +92,11 @@ randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
 runWith :: Options -> ExceptT String IO ()
 runWith opts = withIrcConnection opts . withDccEnv opts $
-      runReaderT $ do o <- request (pack opts)
-                      pos <- canResume o
-                      case pos of
-                        Just p -> resume o p
-                        Nothing -> download o
+    runReaderT $ do o <- request (pack opts)
+                    pos <- canResume o
+                    case pos of
+                      Just p -> resume o p
+                      Nothing -> download o
 
 withIrcConnection :: Options -> (Connection -> ExceptT String IO a)
                   -> ExceptT String IO a

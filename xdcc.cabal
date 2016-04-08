@@ -25,6 +25,7 @@ executable xdcc
   other-modules:        Irc
                       , Dcc
                       , Xdcc
+                      , Options.Applicative.Extended
   build-depends:        base >= 4.7 && < 5
                       , ascii-progress >= 0.3.2.0 && < 0.4
                       , bytestring >= 0.10.6.0 && < 0.11
