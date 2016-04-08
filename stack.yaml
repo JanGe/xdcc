@@ -4,4 +4,5 @@ packages:
 #- '../irc-dcc'
 extra-deps:
 - concurrent-extra-0.7.0.10
+- irc-dcc-1.2.0
 - simpleirc-0.3.1

@@ -25,9 +25,9 @@ import           Network.Socket               (PortNumber)
 import           Path                         (fromRelFile)
 import           Prelude                      hiding (length, null)
 import           System.Console.Concurrent    (outputConcurrent)
-import           System.Posix.Files           (fileExist, getFileStatus,
+import           System.PosixCompat.Files     (fileExist, getFileStatus,
                                                isRegularFile)
-import qualified System.Posix.Files           as Files (fileSize)
+import qualified System.PosixCompat.Files     as Files (fileSize)
 
 type DccIO = ReaderT DccEnv IrcIO
 
