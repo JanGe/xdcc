@@ -69,7 +69,7 @@ canResume o@(OfferFile _ (FileMetadata fn fs)) =
              lift $ throwE "File already exists. Resuming not supported."
          (Nothing, _) ->
              do liftIO $ outputConcurrent
-                           "No resumable file found, starting from zero.\n"
+                           ("No resumable file found, starting from zero.\n"::String)
                 return Nothing
 
 getFileSizeSafe :: FilePath -> IO (Maybe FileOffset)
