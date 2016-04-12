@@ -43,9 +43,10 @@ import           System.IO.Error              (ioeGetErrorString)
 import           Network.SimpleIRC
 
 connectTo :: IrcParams -> Bool -> IO () -> IO () -> IrcIO Connection
-connectTo ircParams withDebug onConnected onJoined = do
-    (conf, bcs) <- lift $ config ircParams
+connectTo params withDebug onConnected onJoined = do
+    (conf, bcs) <- lift $ config params
     con <- connect' conf withDebug
+    lift $ mapM_ ((\f -> f con) . onConnect) (hooks params)
     lift onConnected
     joined <- lift $ waitForAll bcs
     case sequence joined of
