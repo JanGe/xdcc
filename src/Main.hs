@@ -4,6 +4,7 @@ module Main where
 
 import           Irc
 import           Xdcc
+import qualified Znc
 
 import           Control.Error
 import           Control.Monad                (replicateM)
@@ -24,15 +25,15 @@ data Options = Options { network            :: Network
                        , mainChannel        :: Channel
                        , rNick              :: Nickname
                        , pack               :: Pack
-                       , nick               :: Nickname
+                       , port               :: PortNumber
+                       , secure             :: Bool
                        , user               :: Nickname
-                       , port               :: Port
-                       , pass               :: Password
-                       , tls                :: Bool
-                       , znc                :: Bool
+                       , pass               :: Maybe Password
+                       , nick               :: Nickname
                        , additionalChannels :: [Channel]
                        , publicIp           :: Maybe IPv4
                        , lPort              :: Maybe PortNumber
+                       , zncReconnect       :: Bool
                        , verbose            :: Bool }
     deriving (Show)
 
@@ -55,52 +56,56 @@ options defaultNick = info ( helper <*> opts )
           <*> argument auto
               ( metavar "#PACK"
              <> help "Pack number of the file to download" )
-          <*> strOption
-              ( long "nickname"
-             <> short 'n'
-             <> metavar "NAME"
-             <> value defaultNick
-             <> help "Nickname to use for the IRC connection" )
+          <*> option tcpPort
+              ( long "port"
+             <> short 'p'
+             <> metavar "PORT"
+             <> value 6667
+             <> help "Port the IRC network is available on (default is 6667)" )
+          <*> switch
+              ( long "secure"
+             <> short 's'
+             <> help "Use a secure transport (TLS) for the IRC connection" )
           <*> strOption
               ( long "username"
              <> short 'u'
-             <> metavar "UNAME"
+             <> metavar "USERNAME"
              <> value defaultNick
-             <> help "Username to use for the IRC connection" )
-          <*> argument auto
-              ( metavar "PORT"
-             <> value 6667
-             <> help "Port to use for the IRC connection (default is 6667)" )
+             <> help "Username used to authenticate on IRC network" )
           <*> optional (strOption
               ( long "password"
              <> short 'p'
-             <> metavar "PASS"
-             <> help "Password to use for the IRC connection" ))
-          <*> switch
-              ( long "tls"
-             <> short 't'
-             <> help "Use TLS for the IRC connection" )
-          <*> switch
-              ( long "znc"
-             <> short 'z'
-             <> help "Enable znc AUTO-CONNECT support" )
+             <> metavar "PASSWORD"
+             <> help "Username used to authenticate on IRC network" ))
+          <*> strOption
+              ( long "nickname"
+             <> short 'n'
+             <> metavar "NICKNAME"
+             <> value defaultNick
+             <> help "Nickname to use for the IRC connection" )
           <*> many ( CI.mk <$> strOption
               ( long "join"
              <> short 'j'
-             <> metavar "CHANNEL" ))
+             <> metavar "CHANNEL"
+             <> help "Join additional channels" ))
           <*> optional ( option auto
               ( long "publicIp"
              <> short 'i'
              <> metavar "IP"
-             <> help ( "IPv4 address where you are reachable (only needed for "
-                    ++ "Reverse DCC support)." )))
+             <> help ( "IPv4 address where you are reachable from the outside "
+                    ++ "(only needed for Reverse DCC support)" )))
           <*> optional ( option tcpPort
               ( long "localPort"
              <> short 'p'
              <> metavar "LOCAL_PORT"
-             <> help ( "Local port to bind to, default is an arbitrary port "
-                    ++ "selected by the operating system (only needed for "
-                    ++ "Reverse DCC support)." )))
+             <> help ( "Local port to bind to (default is an arbitrary port "
+                    ++ "selected by the operating system; only needed for "
+                    ++ "Reverse DCC support)" )))
+          <*> switch
+              ( long "znc-reconnect"
+             <> short 'z'
+             <> help ( "Tell ZNC IRC bouncer to reconnect to IRC network when "
+                    ++ "disconnected" ))
           <*> switch
               ( long "verbose"
              <> short 'v'
@@ -129,9 +134,16 @@ runWith opts = withIrcConnection opts . withDccEnv opts $
 withIrcConnection :: Options -> (Connection -> ExceptT String IO a)
                   -> ExceptT String IO a
 withIrcConnection Options {..} =
-    bracket (connectAndJoin network port pass tls nick user znc channels verbose)
-            (lift . disconnectFrom znc)
-  where channels = mainChannel : additionalChannels
+    bracket (connectAndJoin params verbose)
+            (disconnectFrom params)
+  where params = IrcParams { host     = network
+                           , port     = port
+                           , secure   = secure
+                           , username = user
+                           , password = pass
+                           , nickname = nick
+                           , channels = mainChannel : additionalChannels
+                           , hooks = [Znc.autoReconnectHooks | zncReconnect] }
 
 withDccEnv :: Options -> (DccEnv -> a) -> Connection -> a
 withDccEnv Options {..} f con = f DccEnv { connection = con
@@ -139,15 +151,13 @@ withDccEnv Options {..} f con = f DccEnv { connection = con
                                          , remoteNick = rNick
                                          , localPort = lPort }
 
-connectAndJoin :: Network -> Port -> Password -> Tls -> Nickname -> Nickname -> Bool
-               -> [Channel] -> Bool
-               -> ExceptT String IO Connection
-connectAndJoin network port pass tls nick user znc chans withDebug = do
-    lift $
-        outputConcurrent $ "Connecting to " ++ network ++ " as " ++ nick ++ "… "
-    connectTo network port pass tls nick user znc chans withDebug
-        (outputConcurrent ("Connected.\n"::String))
-        (outputConcurrent $ "Joined " ++ show chans ++ ".\n")
+connectAndJoin :: IrcParams -> Bool -> ExceptT String IO Connection
+connectAndJoin params withDebug = do
+    lift $ outputConcurrent $ "Connecting to " ++ host params ++ " as "
+                           ++ nickname params ++ "… "
+    connectTo params withDebug
+        (outputConcurrent "Connected.\n")
+        (outputConcurrent $ "Joined " ++ show (channels params) ++ ".\n")
 
 download :: OfferFile -> DccIO ()
 download o@(OfferFile _ f) = do
@@ -190,9 +200,11 @@ cap bound s
               = take (bound - 1) s ++ "…"
   | otherwise = s
 
-bracket :: (Monad m) =>
-           ExceptT e m a -> (a -> ExceptT e m b) -> (a -> ExceptT e m c)
-           -> ExceptT e m c
+bracket :: (Monad m)
+        => ExceptT e m a
+        -> (a -> ExceptT e m b)
+        -> (a -> ExceptT e m c)
+        -> ExceptT e m c
 bracket acquire release apply = do
     r <- acquire
     z <- lift $ runExceptT $ apply r

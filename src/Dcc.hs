@@ -37,14 +37,14 @@ data DccEnv = DccEnv { connection :: Connection
                      , localPort  :: Maybe PortNumber }
 
 sendResumeRequest :: OfferFile -> FileOffset -> DccIO FileOffset
-sendResumeRequest (OfferFile tt f) pos =
-    let tryResume = TryResumeFile tt f pos in
-    do env <- ask
-       lift $ sendAndWaitForAck (connection env)
-                                (remoteNick env)
-                                (asByteString tryResume)
-                                (onResumeAccepted tryResume)
-                                "Timeout when waiting for resume"
+sendResumeRequest (OfferFile tt f) pos = do
+    let tryResume = TryResumeFile tt f pos
+    env <- ask
+    lift $ sendAndWaitForAck (connection env)
+                             (remoteNick env)
+                             (asByteString tryResume)
+                             (onResumeAccepted tryResume)
+                             "Timeout when waiting for resume"
 
 onResumeAccepted :: TryResumeFile -> Nickname -> Broadcast FileOffset
                  -> EventFunc
@@ -55,32 +55,32 @@ onResumeAccepted t rNick resumeAccepted _ =
           Left e -> outputConcurrent e )
 
 canResume :: OfferFile -> DccIO (Maybe FileOffset)
-canResume o@(OfferFile _ (FileMetadata fn fs)) =
-    do curSize <- liftIO $ getFileSizeSafe (fromRelFile fn)
-       case (curSize, fs) of
-         (Just s, Just fs')
-           | s < fs' -> do
-               liftIO $ outputConcurrent
-                          ("Resumable file found with size " ++ show s ++ ".\n")
-               Just <$> sendResumeRequest o s
-           | otherwise ->
-               lift $ throwE "File already exists and seems complete."
-         (Just _, Nothing) ->
-             lift $ throwE "File already exists. Resuming not supported."
-         (Nothing, _) ->
-             do liftIO $ outputConcurrent
-                           ("No resumable file found, starting from zero.\n"::String)
-                return Nothing
+canResume o@(OfferFile _ (FileMetadata fn fs)) = do
+    curSize <- liftIO $ getFileSizeSafe (fromRelFile fn)
+    case (curSize, fs) of
+      (Just s, Just fs')
+        | s < fs' -> do
+            liftIO $ outputConcurrent
+                       ( "Resumable file found with size " ++ show s ++ ".\n" )
+            Just <$> sendResumeRequest o s
+        | otherwise ->
+            lift $ throwE "File already exists and seems complete."
+      (Just _, Nothing) ->
+          lift $ throwE "File already exists. Resuming not supported."
+      (Nothing, _) -> do
+          liftIO $ outputConcurrent
+                     "No resumable file found, starting from zero.\n"
+          return Nothing
 
 getFileSizeSafe :: FilePath -> IO (Maybe FileOffset)
-getFileSizeSafe file =
-    do exists <- fileExist file
-       if exists
-          then do stats <- getFileStatus file
-                  if isRegularFile stats
-                     then return $ Just (fromIntegral (Files.fileSize stats))
-                     else return Nothing
-          else return Nothing
+getFileSizeSafe file = do
+    exists <- fileExist file
+    if exists
+       then do stats <- getFileStatus file
+               if isRegularFile stats
+                  then return $ Just (fromIntegral (Files.fileSize stats))
+                  else return Nothing
+       else return Nothing
 
 offerSink :: DccEnv -> OfferFile -> PortNumber -> IrcIO ()
 offerSink env (OfferFile (Passive _ t) f) p =

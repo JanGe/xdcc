@@ -1,5 +1,5 @@
 name:                 xdcc
-version:              1.0.2
+version:              1.0.3
 synopsis:             A wget-like utility for retrieving files from XDCC bots on
                       IRC
 description:          XDCC (eXtended DCC) is a protocol used by IRC bots to make
@@ -23,8 +23,10 @@ executable xdcc
   hs-source-dirs:       src
   main-is:              Main.hs
   other-modules:        Irc
+                      , IRC.Types
                       , Dcc
                       , Xdcc
+                      , Znc
                       , Options.Applicative.Extended
   build-depends:        base >= 4.7 && < 5
                       , ascii-progress >= 0.3.2.0 && < 0.4
