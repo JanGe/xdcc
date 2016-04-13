@@ -55,21 +55,21 @@ onResumeAccepted t rNick resumeAccepted _ =
           Left e -> outputConcurrent e )
 
 canResume :: OfferFile -> DccIO (Maybe FileOffset)
-canResume o@(OfferFile _ (FileMetadata fn fs)) = do
+canResume o@(OfferFile _ (FileMetadata fn totalSize)) = do
     curSize <- liftIO $ getFileSizeSafe (fromRelFile fn)
-    case (curSize, fs) of
-      (Just s, Just fs')
-        | s < fs' -> do
+    case (curSize, totalSize) of
+      (Just pos, Just total)
+        | pos < total -> do
             liftIO $ outputConcurrent
-                       ( "Resumable file found with size " ++ show s ++ ".\n" )
-            Just <$> sendResumeRequest o s
+                ( "Resumable file found with size " ++ show pos ++ ".\n" )
+            Just <$> sendResumeRequest o pos
         | otherwise ->
             lift $ throwE "File already exists and seems complete."
       (Just _, Nothing) ->
           lift $ throwE "File already exists. Resuming not supported."
       (Nothing, _) -> do
           liftIO $ outputConcurrent
-                     "No resumable file found, starting from zero.\n"
+              "No resumable file found, starting from zero.\n"
           return Nothing
 
 getFileSizeSafe :: FilePath -> IO (Maybe FileOffset)
@@ -88,11 +88,11 @@ offerSink env (OfferFile (Passive _ t) f) p =
       Just i -> lift $ send (connection env)
                             (remoteNick env)
                             (asByteString (OfferFileSink t f i p))
-      Nothing -> throwE ( "Passive connections are only supported, if you "
+      Nothing -> throwE ( "Passive connections are only supported if you "
                        ++ "provide your external IP address on the command "
-                       ++ "line using the '--publicIp' option. You could "
+                       ++ "line using the '--public-ip' option. You could "
                        ++ "also try something like: "
-                       ++ "'--publicIP `curl -s https://4.ifcfg.me`'." )
+                       ++ "'--public-ip `curl -s https://4.ifcfg.me`'." )
 -- Only passive connections can offer a sink to connect to
 offerSink _ _ _ = lift $ return ()
 

@@ -1,7 +1,7 @@
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Znc (autoReconnectHooks) where
+module Znc (autoConnectHooks) where
 
 import           IRC.Types
 
@@ -10,10 +10,10 @@ import           Data.Monoid           ((<>))
 import           Network.SimpleIRC     (Command (MPrivmsg), IrcEvent (Privmsg),
                                         IrcMessage (..), sendCmd)
 
-autoReconnectHooks :: Hook
-autoReconnectHooks = Hook { onConnect = const (return ())
-                          , onEvent = [autoReconnect]
-                          , onDisconnect = disconnect }
+autoConnectHooks :: Hook
+autoConnectHooks = Hook { onConnect = const (return ())
+                        , onEvent = [autoReconnect]
+                        , onDisconnect = disconnect }
 
 autoReconnect :: IrcEvent
 autoReconnect = Privmsg (\con msg ->

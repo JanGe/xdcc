@@ -25,7 +25,7 @@ data Options = Options { network            :: Network
                        , mainChannel        :: Channel
                        , rNick              :: Nickname
                        , pack               :: Pack
-                       , port               :: PortNumber
+                       , rPort              :: PortNumber
                        , secure             :: Bool
                        , user               :: Nickname
                        , pass               :: Maybe Password
@@ -33,7 +33,7 @@ data Options = Options { network            :: Network
                        , additionalChannels :: [Channel]
                        , publicIp           :: Maybe IPv4
                        , lPort              :: Maybe PortNumber
-                       , zncReconnect       :: Bool
+                       , zncAutoConnect     :: Bool
                        , verbose            :: Bool }
     deriving (Show)
 
@@ -58,7 +58,7 @@ options defaultNick = info ( helper <*> opts )
              <> help "Pack number of the file to download" )
           <*> option tcpPort
               ( long "port"
-             <> short 'p'
+             <> short 'P'
              <> metavar "PORT"
              <> value 6667
              <> help "Port the IRC network is available on (default is 6667)" )
@@ -72,7 +72,7 @@ options defaultNick = info ( helper <*> opts )
              <> metavar "USERNAME"
              <> value defaultNick
              <> help "Username used to authenticate on IRC network" )
-          <*> optional (strOption
+          <*> optional ( strOption
               ( long "password"
              <> short 'p'
              <> metavar "PASSWORD"
@@ -89,22 +89,22 @@ options defaultNick = info ( helper <*> opts )
              <> metavar "CHANNEL"
              <> help "Join additional channels" ))
           <*> optional ( option auto
-              ( long "publicIp"
+              ( long "public-ip"
              <> short 'i'
              <> metavar "IP"
              <> help ( "IPv4 address where you are reachable from the outside "
                     ++ "(only needed for Reverse DCC support)" )))
           <*> optional ( option tcpPort
-              ( long "localPort"
-             <> short 'p'
-             <> metavar "LOCAL_PORT"
+              ( long "bind-port"
+             <> short 'b'
+             <> metavar "PORT"
              <> help ( "Local port to bind to (default is an arbitrary port "
                     ++ "selected by the operating system; only needed for "
                     ++ "Reverse DCC support)" )))
           <*> switch
-              ( long "znc-reconnect"
+              ( long "znc-auto-connect"
              <> short 'z'
-             <> help ( "Tell ZNC IRC bouncer to reconnect to IRC network when "
+             <> help ( "Tell ZNC IRC bouncer to connect to IRC network if "
                     ++ "disconnected" ))
           <*> switch
               ( long "verbose"
@@ -137,13 +137,13 @@ withIrcConnection Options {..} =
     bracket (connectAndJoin params verbose)
             (disconnectFrom params)
   where params = IrcParams { host     = network
-                           , port     = port
+                           , port     = rPort
                            , secure   = secure
                            , username = user
                            , password = pass
                            , nickname = nick
                            , channels = mainChannel : additionalChannels
-                           , hooks = [Znc.autoReconnectHooks | zncReconnect] }
+                           , hooks = [Znc.autoConnectHooks | zncAutoConnect] }
 
 withDccEnv :: Options -> (DccEnv -> a) -> Connection -> a
 withDccEnv Options {..} f con = f DccEnv { connection = con
@@ -153,11 +153,12 @@ withDccEnv Options {..} f con = f DccEnv { connection = con
 
 connectAndJoin :: IrcParams -> Bool -> ExceptT String IO Connection
 connectAndJoin params withDebug = do
-    lift $ outputConcurrent $ "Connecting to " ++ host params ++ " as "
-                           ++ nickname params ++ "… "
+    lift $ outputConcurrent
+        ( "Connecting to " ++ host params ++ " on port " ++ show (port params)
+       ++ " as " ++ nickname params ++ "… " )
     connectTo params withDebug
         (outputConcurrent "Connected.\n")
-        (outputConcurrent $ "Joined " ++ show (channels params) ++ ".\n")
+        (outputConcurrent ("Joined " ++ show (channels params) ++ ".\n"))
 
 download :: OfferFile -> DccIO ()
 download o@(OfferFile _ f) = do
