@@ -112,13 +112,13 @@ options defaultNick = info ( helper <*> opts )
              <> help "Enable verbose mode: verbosity level \"debug\"" )
 
 main :: IO ()
-main = withConcurrentOutput . displayConsoleRegions $
-       do defaultNick <- randomNick
-          opts <- execParser $ options defaultNick
-          result <- runExceptT $ runWith opts
-          case result of
-            Left e -> outputConcurrent ("FAILURE xdcc: " ++ e ++ "\n")
-            Right _ -> return ()
+main = withConcurrentOutput . displayConsoleRegions $ do
+         defaultNick <- randomNick
+         opts <- execParser $ options defaultNick
+         result <- runExceptT $ runWith opts
+         case result of
+           Left e -> outputConcurrent ("FAILURE xdcc: " ++ e ++ "\n")
+           Right _ -> return ()
 
 randomNick :: IO String
 randomNick = replicateM 10 $ randomRIO ('a', 'z')
