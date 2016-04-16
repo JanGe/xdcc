@@ -28,7 +28,7 @@ import           IRC.Types
 import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import qualified Control.Concurrent.Broadcast as Broadcast (listenTimeout, new)
 import           Control.Error
-import           Control.Monad                (replicateM, when)
+import           Control.Monad                (replicateM, when, void)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.ByteString.Char8        (ByteString, isPrefixOf, pack,
                                                unpack)
@@ -39,25 +39,32 @@ import           Network.IRC.CTCP             (CTCPByteString, asCTCP)
 import           Prelude                      hiding (and)
 import           System.Console.Concurrent    (outputConcurrent)
 import           System.IO.Error              (ioeGetErrorString)
+import           Control.Exception.Lifted
 
 import           Network.SimpleIRC
 
-connectTo :: IrcParams -> Bool -> IO () -> IO () -> IrcIO Connection
-connectTo params withDebug onConnected onJoined = do
+connectTo :: Options -> IrcParams -> Bool -> IO () -> IO () -> IrcIO Connection
+connectTo opt@Options{..} params withDebug onConnected onJoined = do
     (conf, bcs) <- lift $ config params
     con <- connect' conf withDebug
     lift $ mapM_ ((\f -> f con) . onConnect) (hooks params)
     lift onConnected
-    joined <- lift $ waitForAll bcs
+    joined <- lift $ catch (waitForAll bcs) (handler con)
     case sequence joined of
       Just _ -> do lift onJoined
                    return con
       Nothing -> throwE "Timeout when waiting on joining all channels."
+  where
+    handler :: Connection -> SomeException -> IO [Maybe ()]
+    handler con ex = do
+      outputConcurrent ("FAILURE xdcc: caught exception: " ++ show ex ++ "\n")
+      void $ runExceptT $ disconnectFrom opt params con
+      return ([Nothing])
 
-disconnectFrom :: IrcParams -> Connection -> IrcIO ()
-disconnectFrom IrcParams { hooks } con = lift $ do
+disconnectFrom :: Options -> IrcParams -> Connection -> IrcIO ()
+disconnectFrom Options{..} IrcParams { hooks } con = lift $ do
     mapM_ ((\f -> f con) . onDisconnect) hooks
-    disconnect con "bye"
+    when (not zncAutoConnect) $ disconnect con "bye"
 
 config :: IrcParams -> IO (IrcConfig, [Broadcast ()])
 config IrcParams {..} = do
