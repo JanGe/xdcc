@@ -5,6 +5,7 @@ module Main where
 import           Irc
 import           Xdcc
 import qualified Znc
+import           IRC.Types
 
 import           Control.Error
 import           Control.Monad                (replicateM)
@@ -12,30 +13,13 @@ import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ask, runReaderT)
 import qualified Data.CaseInsensitive         as CI (mk)
-import           Data.IP                      (IPv4)
-import           Network.Socket               (PortNumber)
 import           Options.Applicative.Extended
 import           Path                         (fromRelFile)
 import           System.Console.AsciiProgress hiding (Options)
 import           System.Console.Concurrent    (outputConcurrent,
                                                withConcurrentOutput)
 import           System.Random                (randomRIO)
-
-data Options = Options { network            :: Network
-                       , mainChannel        :: Channel
-                       , rNick              :: Nickname
-                       , pack               :: Pack
-                       , rPort              :: PortNumber
-                       , secure             :: Bool
-                       , user               :: Nickname
-                       , pass               :: Maybe Password
-                       , nick               :: Nickname
-                       , additionalChannels :: [Channel]
-                       , publicIp           :: Maybe IPv4
-                       , lPort              :: Maybe PortNumber
-                       , zncAutoConnect     :: Bool
-                       , verbose            :: Bool }
-    deriving (Show)
+import           Control.Exception.Lifted     (bracket)
 
 options :: String -> ParserInfo Options
 options defaultNick = info ( helper <*> opts )
@@ -125,7 +109,7 @@ randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
 runWith :: Options -> ExceptT String IO ()
 runWith opts = withIrcConnection opts . withDccEnv opts $
-    runReaderT $ do o <- request (pack opts)
+    runReaderT $ do o <- request (packno opts)
                     pos <- canResume o
                     case pos of
                       Just p -> resume o p
@@ -133,12 +117,12 @@ runWith opts = withIrcConnection opts . withDccEnv opts $
 
 withIrcConnection :: Options -> (Connection -> ExceptT String IO a)
                   -> ExceptT String IO a
-withIrcConnection Options {..} =
-    bracket (connectAndJoin params verbose)
-            (disconnectFrom params)
+withIrcConnection opt@Options {..} =
+    bracket (connectAndJoin opt params verbose)
+            (disconnectFrom opt params)
   where params = IrcParams { host     = network
                            , port     = rPort
-                           , secure   = secure
+                           , secure   = usesecure
                            , username = user
                            , password = pass
                            , nickname = nick
@@ -151,12 +135,12 @@ withDccEnv Options {..} f con = f DccEnv { connection = con
                                          , remoteNick = rNick
                                          , localPort = lPort }
 
-connectAndJoin :: IrcParams -> Bool -> ExceptT String IO Connection
-connectAndJoin params withDebug = do
+connectAndJoin :: Options -> IrcParams -> Bool -> ExceptT String IO Connection
+connectAndJoin opt@Options{..} params withDebug = do
     lift $ outputConcurrent
         ( "Connecting to " ++ host params ++ " on port " ++ show (port params)
        ++ " as " ++ nickname params ++ "… " )
-    connectTo params withDebug
+    connectTo opt params withDebug
         (outputConcurrent "Connected.\n")
         (outputConcurrent ("Joined " ++ show (channels params) ++ ".\n"))
 
@@ -201,13 +185,3 @@ cap bound s
               = take (bound - 1) s ++ "…"
   | otherwise = s
 
-bracket :: (Monad m)
-        => ExceptT e m a
-        -> (a -> ExceptT e m b)
-        -> (a -> ExceptT e m c)
-        -> ExceptT e m c
-bracket acquire release apply = do
-    r <- acquire
-    z <- lift $ runExceptT $ apply r
-    _ <- release r
-    hoistEither z
