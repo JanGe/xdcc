@@ -28,7 +28,7 @@ import           IRC.Types
 import           Control.Concurrent.Broadcast (Broadcast, broadcast)
 import qualified Control.Concurrent.Broadcast as Broadcast (listenTimeout, new)
 import           Control.Error
-import           Control.Monad                (replicateM, when, void)
+import           Control.Monad                (replicateM, when)
 import           Control.Monad.Trans.Class    (lift)
 import           Data.ByteString.Char8        (ByteString, isPrefixOf, pack,
                                                unpack)
@@ -43,30 +43,29 @@ import           Control.Exception.Lifted
 
 import           Network.SimpleIRC
 
-connectTo :: Options -> IrcParams -> Bool -> IO () -> IO () -> IrcIO Connection
-connectTo opt@Options{..} params withDebug onConnected onJoined = do
+connectTo :: IrcParams
+          -> Bool
+          -> IO ()
+          -> (Channel -> IO ())
+          -> IrcIO Connection
+connectTo params withDebug onConnected onJoined = do
     (conf, bcs) <- lift $ config params
     con <- connect' conf withDebug
-    lift $ mapM_ ((\f -> f con) . onConnect) (hooks params)
-    lift onConnected
-    joined <- lift $ catch (waitForAll bcs) (handler con)
-    case sequence joined of
-      Just _ -> do lift onJoined
-                   return con
-      Nothing -> throwE "Timeout when waiting on joining all channels."
-  where
-    handler :: Connection -> SomeException -> IO [Maybe ()]
-    handler con ex = do
-      outputConcurrent ("FAILURE xdcc: caught exception: " ++ show ex ++ "\n")
-      void $ runExceptT $ disconnectFrom opt params con
-      return ([Nothing])
+    joined <- lift ( do mapM_ (`onConnect` con) (hooks params)
+                        onConnected
+                        waitForJoin bcs onJoined )
+                   `catch` rethrowAfter (disconnectFrom params con)
+    case joined of
+       Just _  -> return con
+       Nothing -> throwE "Timeout when waiting on joining all channels."
 
-disconnectFrom :: Options -> IrcParams -> Connection -> IrcIO ()
-disconnectFrom Options{..} IrcParams { hooks } con = lift $ do
-    mapM_ ((\f -> f con) . onDisconnect) hooks
-    when (not zncAutoConnect) $ disconnect con "bye"
+disconnectFrom :: IrcParams -> Connection -> IrcIO ()
+disconnectFrom IrcParams { hooks } con =
+    lift ( do mapM_ (`onDisconnect` con) hooks
+              disconnect con "bye" )
+         `catch` ignore
 
-config :: IrcParams -> IO (IrcConfig, [Broadcast ()])
+config :: IrcParams -> IO (IrcConfig, [Broadcast Channel])
 config IrcParams {..} = do
     bcs <- replicateM (length channels) Broadcast.new
     let conf = (mkDefaultConfig host nickname)
@@ -75,7 +74,7 @@ config IrcParams {..} = do
                  , cUsername = username
                  , cPass     = password
                  , cChannels = map CI.original channels
-                 , cEvents   = concatMap onEvent hooks
+                 , cEvents   = concatMap events hooks
                             ++ zipWith ((Join .) . onJoin) channels bcs }
     return (conf, bcs)
 
@@ -84,7 +83,15 @@ connect' conf withDebug = do
     con <- lift $ hoistEither <$> connect conf True withDebug
     catchE con (throwE . ioeGetErrorString)
 
-waitForAll :: [Broadcast ()] -> IO [Maybe ()]
+waitForJoin :: [Broadcast Channel] -> (Channel -> IO ()) -> IO (Maybe [Channel])
+waitForJoin bcs onJoined = do
+    joined <- sequence <$> waitForAll bcs
+    case joined of
+      Just chans -> mapM_ onJoined chans
+      Nothing -> return ()
+    return joined
+
+waitForAll :: [Broadcast a] -> IO [Maybe a]
 waitForAll = mapM (`Broadcast.listenTimeout` 30000000)
 
 sendAndWaitForAck :: Connection
@@ -110,11 +117,11 @@ send con rNick msg = do
     outputConcurrent (show command ++ "\n")
   where command = MPrivmsg (pack rNick) msg
 
-onJoin :: Channel -> Broadcast () -> EventFunc
+onJoin :: Channel -> Broadcast Channel -> EventFunc
 onJoin channel notifyJoined con ircMessage = do
     curNick <- getNickname con
     onMessage (for curNick `and` msgEqCi channel)
-              (\_ -> broadcast notifyJoined ())
+              (\_ -> broadcast notifyJoined channel)
               ircMessage
 
 logMsg :: EventFunc
@@ -154,3 +161,9 @@ msgHasPrefix prefix IrcMessage { mMsg } = prefix `isPrefixOf` mMsg
 
 and :: (a -> Bool) -> (a -> Bool) -> a -> Bool
 and f g x = f x && g x
+
+rethrowAfter :: IrcIO a -> SomeException -> IrcIO b
+rethrowAfter f ex = f >> throw ex
+
+ignore :: SomeException -> IrcIO ()
+ignore _ = return ()

@@ -5,21 +5,38 @@ module Main where
 import           Irc
 import           Xdcc
 import qualified Znc
-import           IRC.Types
 
 import           Control.Error
+import           Control.Exception.Lifted     (bracket)
 import           Control.Monad                (replicateM)
 import           Control.Monad.IO.Class       (liftIO)
 import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ask, runReaderT)
-import qualified Data.CaseInsensitive         as CI (mk)
+import qualified Data.CaseInsensitive         as CI (mk, original)
+import           Data.IP                      (IPv4)
+import           Network.Socket               (PortNumber)
 import           Options.Applicative.Extended
 import           Path                         (fromRelFile)
 import           System.Console.AsciiProgress hiding (Options)
 import           System.Console.Concurrent    (outputConcurrent,
                                                withConcurrentOutput)
 import           System.Random                (randomRIO)
-import           Control.Exception.Lifted     (bracket)
+
+data Options = Options { network            :: Network
+                       , mainChannel        :: Channel
+                       , rNick              :: Nickname
+                       , packno             :: Pack
+                       , rPort              :: PortNumber
+                       , useSecure          :: Bool
+                       , user               :: Nickname
+                       , pass               :: Maybe Password
+                       , nick               :: Nickname
+                       , additionalChannels :: [Channel]
+                       , publicIp           :: Maybe IPv4
+                       , lPort              :: Maybe PortNumber
+                       , zncAutoConnect     :: Bool
+                       , verbose            :: Bool }
+    deriving (Show)
 
 options :: String -> ParserInfo Options
 options defaultNick = info ( helper <*> opts )
@@ -117,12 +134,12 @@ runWith opts = withIrcConnection opts . withDccEnv opts $
 
 withIrcConnection :: Options -> (Connection -> ExceptT String IO a)
                   -> ExceptT String IO a
-withIrcConnection opt@Options {..} =
-    bracket (connectAndJoin opt params verbose)
-            (disconnectFrom opt params)
+withIrcConnection Options {..} =
+    bracket (connectAndJoin params verbose)
+            (disconnectFrom params)
   where params = IrcParams { host     = network
                            , port     = rPort
-                           , secure   = usesecure
+                           , secure   = useSecure
                            , username = user
                            , password = pass
                            , nickname = nick
@@ -135,14 +152,14 @@ withDccEnv Options {..} f con = f DccEnv { connection = con
                                          , remoteNick = rNick
                                          , localPort = lPort }
 
-connectAndJoin :: Options -> IrcParams -> Bool -> ExceptT String IO Connection
-connectAndJoin opt@Options{..} params withDebug = do
+connectAndJoin :: IrcParams -> Bool -> ExceptT String IO Connection
+connectAndJoin params withDebug = do
     lift $ outputConcurrent
         ( "Connecting to " ++ host params ++ " on port " ++ show (port params)
        ++ " as " ++ nickname params ++ "… " )
-    connectTo opt params withDebug
+    connectTo params withDebug
         (outputConcurrent "Connected.\n")
-        (outputConcurrent ("Joined " ++ show (channels params) ++ ".\n"))
+        (\ chan -> outputConcurrent ("Joined " ++ CI.original chan ++ ".\n"))
 
 download :: OfferFile -> DccIO ()
 download o@(OfferFile _ f) = do

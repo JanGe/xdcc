@@ -8,15 +8,12 @@ module IRC.Types
   , Pack
   , Connection
   , Hook(..)
-  , Options(..)
 ) where
 
 import           Control.Error        (ExceptT)
 import           Data.CaseInsensitive (CI)
 import           Network.SimpleIRC    (IrcEvent, MIrc)
 import           Network.Socket       (PortNumber)
-import           Data.IP              (IPv4)
-
 
 type Network = String
 type Channel = CI String
@@ -37,21 +34,5 @@ data IrcParams = IrcParams { host     :: Network
                            , hooks    :: [Hook] }
 
 data Hook = Hook { onConnect    :: Connection -> IO ()
-                 , onEvent      :: [IrcEvent]
+                 , events       :: [IrcEvent]
                  , onDisconnect :: Connection -> IO () }
-
-data Options = Options { network            :: Network
-                       , mainChannel        :: Channel
-                       , rNick              :: Nickname
-                       , packno             :: Pack
-                       , rPort              :: PortNumber
-                       , usesecure          :: Bool
-                       , user               :: Nickname
-                       , pass               :: Maybe Password
-                       , nick               :: Nickname
-                       , additionalChannels :: [Channel]
-                       , publicIp           :: Maybe IPv4
-                       , lPort              :: Maybe PortNumber
-                       , zncAutoConnect     :: Bool
-                       , verbose            :: Bool }
-    deriving (Show)

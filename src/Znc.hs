@@ -5,14 +5,14 @@ module Znc (autoConnectHooks) where
 
 import           IRC.Types
 
-import           Control.Monad         (when)
-import           Data.Monoid           ((<>))
-import           Network.SimpleIRC     (Command (MPrivmsg), IrcEvent (Privmsg),
-                                        IrcMessage (..), sendCmd)
+import           Control.Monad     (when)
+import           Data.Monoid       ((<>))
+import           Network.SimpleIRC (Command (MPrivmsg), IrcEvent (Privmsg),
+                                    IrcMessage (..), sendCmd)
 
 autoConnectHooks :: Hook
-autoConnectHooks = Hook { onConnect = const (return ())
-                        , onEvent = [autoReconnect]
+autoConnectHooks = Hook { onConnect    = const (return ())
+                        , events       = [autoReconnect]
                         , onDisconnect = disconnect }
 
 autoReconnect :: IrcEvent
