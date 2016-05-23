@@ -47,4 +47,4 @@ executable xdcc
                       , unix-compat >= 0.4.1.0 && < 0.4.2
                       , lifted-base >=0.2.3.0 && < 0.3                     
   default-language:     Haskell2010
-  ghc-options:          -Wall
+  ghc-options:          -Wall -threaded -rtsopts -with-rtsopts=-N

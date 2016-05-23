@@ -1,8 +1,6 @@
-resolver: nightly-2016-04-07
+resolver: nightly-2016-05-23
 packages:
 - '.'
 #- '../irc-dcc'
 extra-deps:
-- concurrent-extra-0.7.0.10
 - irc-dcc-1.2.0
-- simpleirc-0.3.1
