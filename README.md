@@ -1,6 +1,8 @@
 ## xdcc - A wget-like utility for retrieving files from XDCC bots on IRC
 
 [![Build Status](https://travis-ci.org/JanGe/xdcc.svg?branch=master)](https://travis-ci.org/JanGe/xdcc)
+[![xdcc on Hackage](https://img.shields.io/hackage/v/xdcc.svg?maxAge=2592000)](https://hackage.haskell.org/package/xdcc)
+[![xdcc on Stackage Nightly](http://stackage.org/package/xdcc/badge/nightly)](http://stackage.org/nightly/package/xdcc)
 
 XDCC (eXtended DCC) is a protocol used by IRC bots to make files
 available for transfer. This utility can be used to retrieve such files.
