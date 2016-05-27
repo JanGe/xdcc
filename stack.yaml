@@ -1,6 +1,8 @@
-resolver: nightly-2016-05-23
+resolver: lts-6.0
 packages:
 - '.'
 #- '../irc-dcc'
 extra-deps:
-- irc-dcc-1.2.0
+- concurrent-extra-0.7.0.10
+- irc-dcc-1.2.1
+- simpleirc-0.3.1
