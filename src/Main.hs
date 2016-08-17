@@ -14,6 +14,7 @@ import           Control.Monad.Trans.Class    (lift)
 import           Control.Monad.Trans.Reader   (ask, runReaderT)
 import qualified Data.CaseInsensitive         as CI (mk, original)
 import           Data.IP                      (IPv4)
+import           Data.Monoid                  ((<>))
 import           Network.Socket               (PortNumber)
 import           Options.Applicative.Extended
 import           Path                         (fromRelFile)
@@ -201,4 +202,3 @@ cap bound s
   | length s > bound && bound > 1
               = take (bound - 1) s ++ "…"
   | otherwise = s
-
