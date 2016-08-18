@@ -1,42 +1,107 @@
-module Xdcc ( module Dcc
-            , request
-            ) where
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE RecordWildCards            #-}
 
-import           Dcc
+module XDCC
+    ( Env(..)
+    , Pack(..)
+    , initialState
+    , putDccState
+    , dispatcher
+    ) where
 
-import           Control.Concurrent.Broadcast (Broadcast, broadcast)
-import           Control.Monad.IO.Class       (liftIO)
-import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ask)
-import           Data.ByteString.Char8        (pack)
-import           System.Console.Concurrent    (outputConcurrent)
+import qualified DCC
+import           IRC.Types
 
-request :: Pack -> DccIO OfferFile
-request p =
-  do env <- ask
-     liftIO $ outputConcurrent ( "Requesting pack #" ++ show p ++ " from "
-                              ++ remoteNick env ++ ", awaiting file offer…\n" )
-     o@(OfferFile _ f) <- requestFile p
-     liftIO $ outputConcurrent
-                ( "Received file offer for " ++ show (fileName f)
-               ++ (case fileSize f of
-                     Just fs -> " of size " ++ show fs ++ " bytes.\n"
-                     Nothing -> ", no file size provided.\n") )
-     return o
+import           Control.Concurrent.STM
+import           Control.Monad.IO.Class    (MonadIO, liftIO)
+import qualified Data.CaseInsensitive      as CI (mk)
+import           Data.Monoid               ((<>))
+import qualified Data.Text                 as T (Text, pack, unpack)
+import qualified Network.IRC.Client        as IRC
+import           System.Console.Concurrent (outputConcurrent)
 
--- TODO XDCC CANCEL on failure
-requestFile :: Pack -> DccIO OfferFile
-requestFile num =
-    do env <- ask
-       lift $ sendAndWaitForAck (connection env)
-                                (remoteNick env)
-                                (pack ("XDCC SEND #" ++ show num))
-                                onFileOfferReceived
-                                "Timeout when waiting for file offer."
+class XdccCommand a where
+  toText :: a -> T.Text
 
-onFileOfferReceived :: Nickname -> Broadcast OfferFile -> EventFunc
-onFileOfferReceived rNick bc _ =
-  onCtcpMessage (from rNick)
-                (\ msg -> case runParser parseService msg of
-                            Right (FileTransfer o) -> broadcast bc o
-                            _ -> return ())
+data XdccSend
+    = Send !Pack
+
+instance XdccCommand XdccSend where
+  toText (Send p) = "XDCC SEND #" <> packToText p
+
+newtype Pack = Pack { unpack :: Int }
+    deriving (Eq, Show)
+
+packToText :: Pack -> T.Text
+packToText = T.pack . show . unpack
+
+newtype XdccIO a = XdccIO { runXdccIO :: IRC.StatefulIRC Stati a }
+    deriving (Functor, Applicative, Monad, MonadIO)
+
+putState :: Status -> XdccIO ()
+putState newS = XdccIO $ do
+    state <- IRC.stateTVar
+    liftIO . atomically . modifyTVar state $ \(_, s') -> (newS, s')
+
+addDccHandler :: IRC.EventHandler Stati -> XdccIO ()
+addDccHandler = XdccIO . IRC.addHandler
+
+sendXdcc :: XdccCommand a => Nickname -> a -> XdccIO ()
+sendXdcc nick = XdccIO . IRC.send . IRC.Privmsg nick . Right . toText
+
+type Stati = (Status, DCC.Status)
+
+initialState :: Channel -> Stati
+initialState chan = (WaitingForJoin chan, DCC.Requesting)
+
+data Env = Env { packNumber :: !Pack
+               , dccEnv     :: !(DCC.Env Stati) }
+
+data Status
+    = WaitingForJoin !Channel
+    | Joined
+    deriving (Eq, Show)
+
+dispatcher :: Env -> IRC.EventHandler Stati
+dispatcher env = IRC.EventHandler
+    { _description = "XDCC SEND workflow handling"
+    , _matchType   = IRC.EEverything
+    , _eventFunc   = \ev -> do
+        status <- fst <$> IRC.state
+        case status of
+          WaitingForJoin chan -> runXdccIO $ joinedHandler env chan ev
+          _                   -> return ()
+    }
+
+joinedHandler :: Env -> Channel -> IRC.UnicodeEvent -> XdccIO ()
+joinedHandler Env {..} channel IRC.Event { _message = IRC.Join joined }
+    | CI.mk joined == channel = do
+        putState Joined
+        liftIO $ outputConcurrent ( "Joined " <> joined <> ".\n")
+
+        liftIO $ outputConcurrent
+            ( "Requesting pack #" <> packToText packNumber <> " from " <> rNick
+           <> ", awaiting file offer…\n" )
+        addDccHandler (dispatcherDcc dccEnv)
+        sendXdcc rNick (Send packNumber)
+  where
+    rNick = DCC.remoteNick dccEnv
+joinedHandler _ _ _ = return ()
+
+putDccState :: DCC.Status -> IRC.StatefulIRC Stati ()
+putDccState newS = do
+    state <- IRC.stateTVar
+    liftIO . atomically . modifyTVar state $ \(s', _) -> (s', newS)
+
+dispatcherDcc :: DCC.Env Stati -> IRC.EventHandler Stati
+dispatcherDcc env = IRC.EventHandler
+    { _description = "DCC SEND workflow handling"
+    , _matchType   = IRC.EEverything
+    , _eventFunc   = \ev -> do
+        status <- snd <$> IRC.state
+        case status of
+          DCC.Requesting        -> DCC.runDccIO env $ DCC.offerReceivedHandler ev
+          DCC.TryResuming offer -> DCC.runDccIO env $ DCC.acceptResumeHandler offer ev
+          _                     -> return ()
+    }

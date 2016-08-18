@@ -1,35 +1,44 @@
 {-# LANGUAGE NamedFieldPuns    #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms   #-}
 
-module Znc (autoConnectHooks) where
+module ZNC (autoConnectHooks) where
 
 import           IRC.Types
 
-import           Control.Monad     (when)
-import           Data.Monoid       ((<>))
-import           Network.SimpleIRC (Command (MPrivmsg), IrcEvent (Privmsg),
-                                    IrcMessage (..), sendCmd)
+import qualified Data.Text          as T (Text)
+import           Network.IRC.Client (Event (..), EventHandler (..),
+                                     EventType (EPrivmsg), Message (..),
+                                     Source (..), StatefulIRC, send)
 
-autoConnectHooks :: Hook
-autoConnectHooks = Hook { onConnect    = const (return ())
+{- TODO Additional checks
+   host == "znc.in"
+   user == "znc"
+-}
+pattern ZncStatusUser = User "*status"
+
+pattern ZncDisconnectedMsg target =
+    Privmsg target (Right
+        "You are currently disconnected from IRC. Use 'connect' to reconnect.")
+
+autoConnectHooks :: Hook s
+autoConnectHooks = Hook { onConnect    = return ()
                         , events       = [autoReconnect]
                         , onDisconnect = disconnect }
 
-autoReconnect :: IrcEvent
-autoReconnect = Privmsg (\con msg ->
-    when (isDisconnectedMsg msg) $
-        sendCmd con $ MPrivmsg "*status" "connect" )
+autoReconnect :: EventHandler s
+autoReconnect = EventHandler
+    { _description = "Auto-reconnect when ZNC is enabled"
+    , _matchType   = EPrivmsg
+    , _eventFunc   = handler
+    }
+  where
+    handler Event { _source  = ZncStatusUser
+                  , _message = ZncDisconnectedMsg _ } = send' "connect"
+    handler _ = return ()
 
-disconnect :: Connection -> IO ()
-disconnect con = sendCmd con $ MPrivmsg "*status" "disconnect"
+disconnect :: StatefulIRC s ()
+disconnect = send' "disconnect"
 
-isDisconnectedMsg :: IrcMessage -> Bool
-isDisconnectedMsg msg@IrcMessage { mMsg } =
-    isStatusMsg msg
- && mMsg == ( "You are currently disconnected from IRC. Use 'connect' to "
-           <> "reconnect." )
-
-isStatusMsg :: IrcMessage -> Bool
-isStatusMsg IrcMessage { mHost, mOrigin, mNick, mUser } =
-    mHost == Just "znc.in"  && mOrigin == Just "*status"
- && mNick == Just "*status" && mUser   == Just "znc"
+send' :: T.Text -> StatefulIRC s ()
+send' = send . Privmsg "*status" . Right

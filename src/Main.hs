@@ -2,41 +2,44 @@
 
 module Main where
 
-import           Irc
-import           Xdcc
-import qualified Znc
+import qualified DCC
+import           IRC.Types
+import           XDCC
+import qualified ZNC
 
-import           Control.Error
-import           Control.Exception.Lifted     (bracket)
+import           Control.Concurrent.Async     (async, waitCatch)
+import           Control.Exception            (SomeException)
 import           Control.Monad                (replicateM)
-import           Control.Monad.IO.Class       (liftIO)
-import           Control.Monad.Trans.Class    (lift)
-import           Control.Monad.Trans.Reader   (ask, runReaderT)
+import qualified Data.ByteString.Char8        as B (pack, unpack)
 import qualified Data.CaseInsensitive         as CI (mk, original)
 import           Data.IP                      (IPv4)
+import           Data.Maybe                   (fromMaybe)
 import           Data.Monoid                  ((<>))
+import qualified Data.Text                    as T (pack, unpack)
+import qualified Network.IRC.Client           as IRC
 import           Network.Socket               (PortNumber)
 import           Options.Applicative.Extended
-import           Path                         (fromRelFile)
+import           Path                         (File, Path, Rel, fromRelFile)
 import           System.Console.AsciiProgress hiding (Options)
 import           System.Console.Concurrent    (outputConcurrent,
                                                withConcurrentOutput)
+import           System.Exit                  (exitFailure, exitSuccess)
 import           System.Random                (randomRIO)
 
-data Options = Options { network            :: Network
-                       , mainChannel        :: Channel
-                       , rNick              :: Nickname
-                       , packno             :: Pack
-                       , rPort              :: PortNumber
-                       , useSecure          :: Bool
-                       , user               :: Nickname
-                       , pass               :: Maybe Password
-                       , nick               :: Nickname
-                       , additionalChannels :: [Channel]
-                       , publicIp           :: Maybe IPv4
-                       , lPort              :: Maybe PortNumber
-                       , zncAutoConnect     :: Bool
-                       , verbose            :: Bool }
+data Options = Options { network            :: !Network
+                       , mainChannel        :: !Channel
+                       , remoteNick         :: !Nickname
+                       , packNumber         :: !Pack
+                       , remotePort         :: !PortNumber
+                       , useSecure          :: !Bool
+                       , username           :: !Nickname
+                       , password           :: !(Maybe Password)
+                       , nickname           :: !Nickname
+                       , additionalChannels :: ![Channel]
+                       , publicIP           :: !(Maybe IPv4)
+                       , localPort          :: !(Maybe PortNumber)
+                       , zncAutoConnect     :: !Bool
+                       , verbose            :: !Bool }
     deriving (Show)
 
 options :: String -> ParserInfo Options
@@ -46,16 +49,16 @@ options defaultNick = info ( helper <*> opts )
                           <> progDesc ( "A wget-like utility for retrieving "
                                      ++ "files from XDCC bots on IRC" ))
   where opts = Options
-          <$> strArgument
+          <$> ( B.pack <$> strArgument
               ( metavar "HOST"
-             <> help "Host address of the IRC network" )
-          <*> ( CI.mk <$> strArgument
+             <> help "Host address of the IRC network" ))
+          <*> ( CI.mk . T.pack <$> strArgument
               ( metavar "CHANNEL"
              <> help "Main channel to join on network" ))
-          <*> strArgument
+          <*> ( T.pack <$> strArgument
               ( metavar "USER"
-             <> help "Nickname of the user or bot to download from" )
-          <*> argument auto
+             <> help "Nickname of the user or bot to download from" ))
+          <*> argument packNum
               ( metavar "#PACK"
              <> help "Pack number of the file to download" )
           <*> option tcpPort
@@ -68,24 +71,24 @@ options defaultNick = info ( helper <*> opts )
               ( long "secure"
              <> short 's'
              <> help "Use a secure transport (TLS) for the IRC connection" )
-          <*> strOption
+          <*> ( T.pack <$> strOption
               ( long "username"
              <> short 'u'
              <> metavar "USERNAME"
              <> value defaultNick
-             <> help "Username used to authenticate on IRC network" )
-          <*> optional ( strOption
+             <> help "Username used to authenticate on IRC network" ))
+          <*> optional ( T.pack <$> strOption
               ( long "password"
              <> short 'p'
              <> metavar "PASSWORD"
-             <> help "Username used to authenticate on IRC network" ))
-          <*> strOption
+             <> help "Password used to authenticate on IRC network" ))
+          <*> ( T.pack <$> strOption
               ( long "nickname"
              <> short 'n'
              <> metavar "NICKNAME"
              <> value defaultNick
-             <> help "Nickname to use for the IRC connection" )
-          <*> many ( CI.mk <$> strOption
+             <> help "Nickname to use for the IRC connection" ))
+          <*> many ( CI.mk . T.pack <$> strOption
               ( long "join"
              <> short 'j'
              <> metavar "CHANNEL"
@@ -115,87 +118,82 @@ options defaultNick = info ( helper <*> opts )
 
 main :: IO ()
 main = withConcurrentOutput . displayConsoleRegions $ do
-         defaultNick <- randomNick
-         opts <- execParser $ options defaultNick
-         result <- runExceptT $ runWith opts
-         case result of
-           Left e -> outputConcurrent ("FAILURE xdcc: " ++ e ++ "\n")
-           Right _ -> return ()
+    defaultNick <- randomNick
+    opts        <- execParser $ options defaultNick
+    result      <- mainWith opts
+    case result of
+      Left ex -> outputConcurrent ("FAILURE xdcc: " ++ show ex ++ "\n") >> exitFailure
+      _       -> exitSuccess
 
-randomNick :: IO String
-randomNick = replicateM 10 $ randomRIO ('a', 'z')
+  where
+    randomNick = replicateM 10 $ randomRIO ('a', 'z')
 
-runWith :: Options -> ExceptT String IO ()
-runWith opts = withIrcConnection opts . withDccEnv opts $
-    runReaderT $ do o <- request (packno opts)
-                    pos <- canResume o
-                    case pos of
-                      Just p -> resume o p
-                      Nothing -> download o
+-- TODO ZNC hooks
+mainWith :: Options -> IO (Either SomeException ())
+mainWith Options {..} = do
+    outputConcurrent ( "Connecting to " ++ B.unpack network ++ " on port "
+                     ++ show remotePort ++ " as " ++ T.unpack nickname ++ "…\n" )
+    conn <- connectWith logger network (fromIntegral remotePort) 1
 
-withIrcConnection :: Options -> (Connection -> ExceptT String IO a)
-                  -> ExceptT String IO a
-withIrcConnection Options {..} =
-    bracket (connectAndJoin params verbose)
-            (disconnectFrom params)
-  where params = IrcParams { host     = network
-                           , port     = rPort
-                           , secure   = useSecure
-                           , username = user
-                           , password = pass
-                           , nickname = nick
-                           , channels = mainChannel : additionalChannels
-                           , hooks = [Znc.autoConnectHooks | zncAutoConnect] }
+    -- Only wait for joining main channel. It doesn't matter that we might not have
+    -- joined all additional channels when initiating a file transfer.
+    eventLoop <- async $ IRC.startStateful (connConfig conn) ircConfig initState
+    waitCatch eventLoop
+    -- TODO Handle errors
 
-withDccEnv :: Options -> (DccEnv -> a) -> Connection -> a
-withDccEnv Options {..} f con = f DccEnv { connection = con
-                                         , publicIp = publicIp
-                                         , remoteNick = rNick
-                                         , localPort = lPort }
+  where
+    initState = XDCC.initialState mainChannel
 
-connectAndJoin :: IrcParams -> Bool -> ExceptT String IO Connection
-connectAndJoin params withDebug = do
-    lift $ outputConcurrent
-        ( "Connecting to " ++ host params ++ " on port " ++ show (port params)
-       ++ " as " ++ nickname params ++ "… " )
-    connectTo params withDebug
-        (outputConcurrent "Connected.\n")
-        (\ chan -> outputConcurrent ("Joined " ++ CI.original chan ++ ".\n"))
+    xdccConfig = XDCC.Env
+        { packNumber = packNumber
+        , dccEnv     = DCC.Env
+            { remoteNick    = remoteNick
+            , publicIP      = publicIP
+            , localPort     = localPort
+            , progressBar   = pBar
+            , progress      = progressFn
+            , sendFn        = IRC.send
+            , putDccStateFn = XDCC.putDccState
+            , disconnectFn  = IRC.disconnect
+            }
+        }
 
-download :: OfferFile -> DccIO ()
-download o@(OfferFile _ f) = do
-    env <- ask
-    lift $ withProgressBar f 0 (\onChunk ->
-        runReaderT
-            (acceptFile o (offerSink env o) onChunk)
-            (localPort env) )
+    connConfig conn' = conn'
+        { IRC._onconnect    = IRC.defaultOnConnect    >> mapM_ onConnect    hooks
+        , IRC._ondisconnect = IRC.defaultOnDisconnect >> mapM_ onDisconnect hooks
+        }
 
-resume :: OfferFile -> FileOffset -> DccIO ()
-resume o@(OfferFile tt f) pos = do
-    env <- ask
-    lift $ withProgressBar f pos (\onChunk ->
-        runReaderT
-            (resumeFile (AcceptResumeFile tt f pos) (offerSink env o) onChunk)
-            (localPort env) )
+    ircConfig = (IRC.defaultIRCConf nickname)
+        { IRC._username      = username
+        , IRC._password      = password
+        , IRC._channels      = CI.original <$> mainChannel : additionalChannels
+        , IRC._eventHandlers = dispatcher xdccConfig
+                             : mconcat (events <$> hooks)
+                            <> IRC.defaultEventHandlers
+        }
 
-withProgressBar :: FileMetadata
-                -> FileOffset
-                -> ((FileOffset -> IO ()) -> ExceptT String IO ())
-                -> ExceptT String IO ()
-withProgressBar file pos f = do
-    progressBar <- liftIO $ newProgressBar opts
-    liftIO $ tickN' progressBar pos
-    f (tickN' progressBar)
-  where opts = def
-            { pgTotal = fromIntegral (fromMaybe maxBound (fileSize file))
-            , pgWidth = 100
-            , pgFormat = maybe formatUnknown (const format) (fileSize file) }
-        cappedFn = cap 30 (fromRelFile (fileName file))
-        format = cappedFn ++ " [:bar] :percent (:current/:total)"
-        formatUnknown = cappedFn ++ " [:bar] (:current/unknown)"
+    hooks = [ZNC.autoConnectHooks | zncAutoConnect]
 
-tickN' :: Integral a => ProgressBar -> a -> IO ()
-tickN' p = tickN p . fromIntegral
+    connectWith
+        | useSecure = IRC.connectWithTLS'
+        | otherwise = IRC.connect'
+
+    logger
+        | verbose   = IRC.stdoutLogger
+        | otherwise = IRC.noopLogger
+
+progressFn :: Integral a => ProgressBar -> a -> IO ()
+progressFn p = tickN p . fromIntegral
+
+pBar :: Path Rel File -> Maybe DCC.FileOffset -> IO ProgressBar
+pBar name size = newProgressBar $ def
+    { pgTotal  = fromIntegral $ fromMaybe maxBound size
+    , pgFormat = maybe formatUnknown (const format) size
+    , pgWidth  = 100 }
+  where
+    cappedName    = cap 30 $ fromRelFile name
+    formatUnknown = cappedName ++ " [:bar] (:current/unknown)"
+    format        = cappedName ++ " [:bar] :percent (:current/:total)"
 
 cap :: Int -> String -> String
 cap bound s

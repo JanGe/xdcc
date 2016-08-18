@@ -1,38 +1,21 @@
 module IRC.Types
-  ( IrcIO
-  , IrcParams(..)
-  , Network
+  ( Network
   , Channel
   , Nickname
   , Password
-  , Pack
-  , Connection
   , Hook(..)
 ) where
 
-import           Control.Error        (ExceptT)
-import           Data.CaseInsensitive (CI)
-import           Network.SimpleIRC    (IrcEvent, MIrc)
-import           Network.Socket       (PortNumber)
+import           Data.ByteString.Char8 (ByteString)
+import           Data.CaseInsensitive  (CI)
+import qualified Data.Text             as T (Text)
+import           Network.IRC.Client    (EventHandler, StatefulIRC)
 
-type Network = String
-type Channel = CI String
-type Nickname = String
-type Password = String
-type Pack = Int
-type Connection = MIrc
+type Network  = ByteString
+type Channel  = CI T.Text
+type Nickname = T.Text
+type Password = T.Text
 
-type IrcIO = ExceptT String IO
-
-data IrcParams = IrcParams { host     :: Network
-                           , port     :: PortNumber
-                           , secure   :: Bool
-                           , username :: Nickname
-                           , password :: Maybe Password
-                           , nickname :: Nickname
-                           , channels :: [Channel]
-                           , hooks    :: [Hook] }
-
-data Hook = Hook { onConnect    :: Connection -> IO ()
-                 , events       :: [IrcEvent]
-                 , onDisconnect :: Connection -> IO () }
+data Hook s = Hook { onConnect    :: StatefulIRC s ()
+                   , events       :: [EventHandler s]
+                   , onDisconnect :: StatefulIRC s () }

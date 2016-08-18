@@ -1,5 +1,6 @@
 .stack-work
 .idea
 *.iml
+ideaHaskellLib
 .DS_Store
 dist
