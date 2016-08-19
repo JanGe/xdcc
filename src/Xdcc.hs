@@ -17,7 +17,7 @@ import           Control.Concurrent.STM
 import           Control.Monad.IO.Class    (MonadIO, liftIO)
 import qualified Data.CaseInsensitive      as CI (mk)
 import           Data.Monoid               ((<>))
-import qualified Data.Text                 as T (Text, pack, unpack)
+import qualified Data.Text                 as T (Text, pack)
 import qualified Network.IRC.Client        as IRC
 import           System.Console.Concurrent (outputConcurrent)
 

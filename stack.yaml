@@ -1,17 +1,15 @@
 resolver: lts-6.12
 packages:
 - '.'
-- '../irc-dcc'
-# - location:
-#     git:       git@github.com:JanGe/irc-dcc.git
-#     commit:    a8e0548c17e99b89d71ae46f21ab230684e9a8e5
-#   extra-dep: true
+- location:
+    git:       git@github.com:JanGe/irc-dcc.git
+    commit:    6b1e02448b337f32f8048fedca4c5a2c39d688cd
+  extra-dep: true
 - location:
     git:       git@github.com:JanGe/irc-client.git
-    commit:    3bdb42a2e0661f538392d39ae1a89d395843d2fb
+    commit:    0957c8241937d13bd7c97fbdc6475ec9f1a75e97
   extra-dep: true
 extra-deps:
 - concurrent-extra-0.7.0.10
 - irc-conduit-0.2.0.0
-- irc-client-0.4.2.2
 - safe-exceptions-0.1.4.0
