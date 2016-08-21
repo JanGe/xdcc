@@ -64,17 +64,14 @@ getEnv = DccIO ask
 transfer' :: FileTransfer (ReaderT (IRC.IRCState s) IO) -> DccIO s ()
 transfer' = DccIO . lift . transfer
 
-class HasFileName a where
+class FileOffer a where
   fileName :: a -> Path Rel File
+  size :: a -> Maybe FileOffset
 
-instance HasFileName DccSend where
+instance FileOffer DccSend where
   fileName (Send p _ _ _) = fromPath p
   fileName (SendReverseServer p _ _ _) = fromPath p
 
-class HasSize a where
-  size :: a -> Maybe FileOffset
-
-instance HasSize DccSend where
   size (Send _ _ _ s) = s
   size (SendReverseServer _ _ s _) = Just s
 
@@ -147,7 +144,8 @@ download transferType offer = do
   where
     msg FromStart        = "No resumable file found, starting from zero...\n"
     msg (ResumeFrom pos) = "Resume from position " <> show pos <> "...\n"
-    dlStatus FromStart = Downloading offer
+
+    dlStatus FromStart        = Downloading offer
     dlStatus (ResumeFrom pos) = Resuming offer pos
 
 connectionType :: Env s -> DccSend -> Either T.Text (ConnectionType (ReaderT (IRC.IRCState s) IO))

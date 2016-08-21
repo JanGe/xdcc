@@ -18,4 +18,5 @@ type Password = T.Text
 
 data Hook s = Hook { onConnect    :: StatefulIRC s ()
                    , events       :: [EventHandler s]
-                   , onDisconnect :: StatefulIRC s () }
+                   , onDisconnect :: StatefulIRC s ()
+                   }

@@ -42,7 +42,7 @@ newtype XdccIO a = XdccIO { runXdccIO :: IRC.StatefulIRC Stati a }
 putState :: Status -> XdccIO ()
 putState newS = XdccIO $ do
     state <- IRC.stateTVar
-    liftIO . atomically . modifyTVar state $ \(_, s') -> (newS, s')
+    liftIO . atomically . modifyTVar state $ \s -> s { xdccStatus = newS }
 
 addDccHandler :: IRC.EventHandler Stati -> XdccIO ()
 addDccHandler = XdccIO . IRC.addHandler
@@ -50,10 +50,14 @@ addDccHandler = XdccIO . IRC.addHandler
 sendXdcc :: XdccCommand a => Nickname -> a -> XdccIO ()
 sendXdcc nick = XdccIO . IRC.send . IRC.Privmsg nick . Right . toText
 
-type Stati = (Status, DCC.Status)
+data Stati = Stati { xdccStatus :: Status
+                   , dccStatus  :: DCC.Status
+                   }
 
 initialState :: Channel -> Stati
-initialState chan = (WaitingForJoin chan, DCC.Requesting)
+initialState chan = Stati { xdccStatus = WaitingForJoin chan
+                          , dccStatus  = DCC.Requesting
+                          }
 
 data Env = Env { packNumber :: !Pack
                , dccEnv     :: !(DCC.Env Stati) }
@@ -68,7 +72,7 @@ dispatcher env = IRC.EventHandler
     { _description = "XDCC SEND workflow handling"
     , _matchType   = IRC.EEverything
     , _eventFunc   = \ev -> do
-        status <- fst <$> IRC.state
+        status <- xdccStatus <$> IRC.state
         case status of
           WaitingForJoin chan -> runXdccIO $ joinedHandler env chan ev
           _                   -> return ()
@@ -92,14 +96,14 @@ joinedHandler _ _ _ = return ()
 putDccState :: DCC.Status -> IRC.StatefulIRC Stati ()
 putDccState newS = do
     state <- IRC.stateTVar
-    liftIO . atomically . modifyTVar state $ \(s', _) -> (s', newS)
+    liftIO . atomically . modifyTVar state $ \s -> s { dccStatus = newS }
 
 dispatcherDcc :: DCC.Env Stati -> IRC.EventHandler Stati
 dispatcherDcc env = IRC.EventHandler
     { _description = "DCC SEND workflow handling"
     , _matchType   = IRC.EEverything
     , _eventFunc   = \ev -> do
-        status <- snd <$> IRC.state
+        status <- dccStatus <$> IRC.state
         case status of
           DCC.Requesting        -> DCC.runDccIO env $ DCC.offerReceivedHandler ev
           DCC.TryResuming offer -> DCC.runDccIO env $ DCC.acceptResumeHandler offer ev
