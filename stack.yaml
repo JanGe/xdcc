@@ -2,7 +2,7 @@ resolver: lts-6.13
 packages:
 - '.'
 - location:
-    git:       git@github.com:JanGe/irc-client.git
+    git:       https://github.com/JanGe/irc-client.git
     commit:    0957c8241937d13bd7c97fbdc6475ec9f1a75e97
   extra-dep: true
 extra-deps:
