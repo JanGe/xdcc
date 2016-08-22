@@ -1,5 +1,5 @@
 name:                 xdcc
-version:              1.1.1
+version:              1.1.2
 synopsis:             A wget-like utility for retrieving files from XDCC bots on
                       IRC
 description:          XDCC (eXtended DCC) is a protocol used by IRC bots to make
