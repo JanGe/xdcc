@@ -15,8 +15,10 @@ import           Network.IRC.Client (Event (..), EventHandler (..),
    host == "znc.in"
    user == "znc"
 -}
+pattern ZncStatusUser :: Source T.Text
 pattern ZncStatusUser = User "*status"
 
+pattern ZncDisconnectedMsg :: T.Text -> Message T.Text
 pattern ZncDisconnectedMsg target =
     Privmsg target (Right
         "You are currently disconnected from IRC. Use 'connect' to reconnect.")
