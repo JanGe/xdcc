@@ -45,7 +45,7 @@ putState newS = XdccIO $ do
     liftIO . atomically . modifyTVar state $ \s -> s { xdccStatus = newS }
 
 addDccHandler :: IRC.EventHandler Stati -> XdccIO ()
-addDccHandler = XdccIO . addHandler'
+addDccHandler = XdccIO . IRC.addHandler
 
 sendXdcc :: XdccCommand a => Nickname -> a -> XdccIO ()
 sendXdcc nick = XdccIO . IRC.send . IRC.Privmsg nick . Right . toText

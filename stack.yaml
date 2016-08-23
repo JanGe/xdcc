@@ -2,6 +2,6 @@ resolver: lts-6.13
 packages:
 - '.'
 extra-deps:
-- irc-client-0.4.2.2
+- irc-client-0.4.3.0
 - irc-dcc-2.0.0
 - safe-exceptions-0.1.4.0
