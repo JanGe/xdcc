@@ -14,9 +14,26 @@ See https://en.wikipedia.org/wiki/XDCC for more details.
 * (Standard) DCC
 * Reverse DCC
 
+### Advanced features:
+
+* Support for the IRC bouncer [ZNC](http://znc.in)
+
+## Usage
+```
+xdcc HOST CHANNEL USER #PACK
+```
+
+See `xdcc --help` for more options.
+
 ## Installation
 
-### OS X & Linux
+### OS X
+
+1. Install [Homebrew](http://brew.sh/).
+1. Run `brew tap JanGe/haskell`.
+1. Run `brew install xdcc`.
+
+### Linux
 
 1. Install [Stack](http://docs.haskellstack.org/en/stable/README/).
 1. Add `~/.local/bin` to your `PATH` environment variable.
@@ -29,13 +46,6 @@ See https://en.wikipedia.org/wiki/XDCC for more details.
 1. Open a [Command Prompt](http://www.digitalcitizen.life/7-ways-launch-command-prompt-windows-7-windows-8).
 1. Run `stack setup --resolver nightly`.
 1. Run `stack install xdcc --resolver nightly`.
-
-## Usage
-```
-xdcc HOST CHANNEL USER #PACK
-```
-
-See `xdcc --help` for more options.
 
 ## Development
 
