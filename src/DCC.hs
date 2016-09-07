@@ -48,10 +48,15 @@ send msg = DccIO $ do
     send' <- asks sendFn
     lift $ send' msg
 
-putDccState    :: Status -> DccIO s ()
+putDccState :: Status -> DccIO s ()
 putDccState s = DccIO $ do
-    putState' <- asks putDccStateFn
-    lift $ putState' s
+    putState <- asks putDccStateFn
+    lift $ putState s
+
+onAbort :: DccIO s ()
+onAbort = DccIO $ do
+    onAbort' <- asks onAbortFn
+    lift onAbort'
 
 disconnect  :: DccIO s ()
 disconnect = DccIO $ do
@@ -82,6 +87,7 @@ data Env s = Env { remoteNick    :: !Nickname
                  , progress      :: ProgressBar -> FileOffset -> IO ()
                  , sendFn        :: IRC.UnicodeMessage -> IRC.StatefulIRC s ()
                  , putDccStateFn :: Status -> IRC.StatefulIRC s ()
+                 , onAbortFn     :: IRC.StatefulIRC s ()
                  , disconnectFn  :: IRC.StatefulIRC s () }
 
 data Status = Requesting
@@ -180,12 +186,17 @@ downloadWithProgress name size' conType transType = do
 
 abort :: T.Text -> DccIO s ()
 abort err = do
-    liftIO $ outputConcurrent err
+    liftIO $ outputConcurrent (err <> "\n")
     putDccState Aborting
+    onAbort
     disconnect
 
 sendCtcp :: CtcpCommand a => Nickname -> a -> DccIO s ()
-sendCtcp nick = send . IRC.Privmsg nick . Left . toCtcp
+sendCtcp nick cmd = do
+    liftIO $ outputConcurrent (show msg <> "\n")
+    send msg
+  where
+    msg = IRC.Privmsg nick (Left $ toCtcp cmd)
 
 isResumable :: Path Rel File -> Maybe FileOffset -> IO (Either T.Text (Maybe FileOffset))
 isResumable file totalSize = do

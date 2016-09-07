@@ -154,6 +154,7 @@ mainWith Options {..} = do
             , progress      = progressFn
             , sendFn        = IRC.send
             , putDccStateFn = XDCC.putDccState
+            , onAbortFn     = XDCC.onAbort remoteNick
             , disconnectFn  = IRC.disconnect
             }
         }

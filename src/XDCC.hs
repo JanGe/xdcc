@@ -7,6 +7,7 @@ module XDCC
     , Pack(..)
     , initialState
     , putDccState
+    , onAbort
     , dispatcher
     ) where
 
@@ -30,6 +31,12 @@ data XdccSend
 instance XdccCommand XdccSend where
   toText (Send p) = "XDCC SEND #" <> packToText p
 
+data XdccCancel
+    = Cancel
+
+instance XdccCommand XdccCancel where
+  toText Cancel = "XDCC CANCEL"
+
 newtype Pack = Pack { unpack :: Int }
     deriving (Eq, Show)
 
@@ -48,7 +55,11 @@ addDccHandler :: IRC.EventHandler Stati -> XdccIO ()
 addDccHandler = XdccIO . IRC.addHandler
 
 sendXdcc :: XdccCommand a => Nickname -> a -> XdccIO ()
-sendXdcc nick = XdccIO . IRC.send . IRC.Privmsg nick . Right . toText
+sendXdcc nick cmd = XdccIO $ do
+    liftIO $ outputConcurrent (show msg <> "\n")
+    IRC.send msg
+  where
+    msg = IRC.Privmsg nick (Right $ toText cmd)
 
 data Stati = Stati { xdccStatus :: Status
                    , dccStatus  :: DCC.Status
@@ -92,6 +103,9 @@ joinedHandler Env {..} channel IRC.Event { _message = IRC.Join joined }
   where
     rNick = DCC.remoteNick dccEnv
 joinedHandler _ _ _ = return ()
+
+onAbort :: Nickname -> IRC.StatefulIRC Stati ()
+onAbort rNick = runXdccIO $ sendXdcc rNick Cancel
 
 putDccState :: DCC.Status -> IRC.StatefulIRC Stati ()
 putDccState newS = do
