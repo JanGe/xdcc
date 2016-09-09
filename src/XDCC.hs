@@ -1,6 +1,9 @@
+{-# LANGUAGE FlexibleContexts           #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses      #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE TypeFamilies               #-}
 
 module XDCC
     ( Env(..)
@@ -14,13 +17,16 @@ module XDCC
 import qualified DCC
 import           IRC.Types
 
-import           Control.Concurrent.STM
-import           Control.Monad.IO.Class    (MonadIO, liftIO)
-import qualified Data.CaseInsensitive      as CI (mk)
-import           Data.Monoid               ((<>))
-import qualified Data.Text                 as T (Text, pack)
-import qualified Network.IRC.Client        as IRC
-import           System.Console.Concurrent (outputConcurrent)
+import           Control.Concurrent.STM      (atomically, modifyTVar)
+import           Control.Monad.Base          (MonadBase)
+import           Control.Monad.IO.Class      (MonadIO, liftIO)
+import           Control.Monad.Trans.Control (MonadBaseControl(..), liftBaseOp)
+import qualified Data.CaseInsensitive        as CI (mk)
+import           Data.Monoid                 ((<>))
+import qualified Data.Text                   as T (Text, pack)
+import qualified Network.IRC.Client          as IRC
+import           System.Console.Concurrent   (outputConcurrent)
+import           System.Signal               (Signal, installHandler, sigINT)
 
 class XdccCommand a where
   toText :: a -> T.Text
@@ -44,15 +50,20 @@ packToText :: Pack -> T.Text
 packToText = T.pack . show . unpack
 
 newtype XdccIO a = XdccIO { runXdccIO :: IRC.StatefulIRC Stati a }
-    deriving (Functor, Applicative, Monad, MonadIO)
+    deriving (Functor, Applicative, Monad, MonadIO, MonadBase IO)
+
+instance MonadBaseControl IO XdccIO where
+  type StM XdccIO a = a
+  liftBaseWith f = XdccIO $ liftBaseWith $ \q -> f (q . runXdccIO)
+  restoreM = XdccIO . restoreM
 
 putState :: Status -> XdccIO ()
 putState newS = XdccIO $ do
     state <- IRC.stateTVar
     liftIO . atomically . modifyTVar state $ \s -> s { xdccStatus = newS }
 
-addDccHandler :: IRC.EventHandler Stati -> XdccIO ()
-addDccHandler = XdccIO . IRC.addHandler
+addHandler :: IRC.EventHandler Stati -> XdccIO ()
+addHandler = XdccIO . IRC.addHandler
 
 sendXdcc :: XdccCommand a => Nickname -> a -> XdccIO ()
 sendXdcc nick cmd = XdccIO $ do
@@ -98,7 +109,8 @@ joinedHandler Env {..} channel IRC.Event { _message = IRC.Join joined }
         liftIO $ outputConcurrent
             ( "Requesting pack #" <> packToText packNumber <> " from " <> rNick
            <> ", awaiting file offer…\n" )
-        addDccHandler (dispatcherDcc dccEnv)
+        addHandler (dispatcherDcc dccEnv)
+        onInterruptSignal $ const $ sendXdcc rNick Cancel
         sendXdcc rNick (Send packNumber)
   where
     rNick = DCC.remoteNick dccEnv
@@ -106,6 +118,13 @@ joinedHandler _ _ _ = return ()
 
 onAbort :: Nickname -> IRC.StatefulIRC Stati ()
 onAbort rNick = runXdccIO $ sendXdcc rNick Cancel
+
+onInterruptSignal :: (Signal -> XdccIO ()) -> XdccIO ()
+onInterruptSignal f = installHandler' sigINT $ \s -> do
+    f s
+    XdccIO IRC.disconnect
+  where
+    installHandler' = liftBaseOp . installHandler
 
 putDccState :: DCC.Status -> IRC.StatefulIRC Stati ()
 putDccState newS = do

@@ -53,15 +53,15 @@ putDccState s = DccIO $ do
     putState <- asks putDccStateFn
     lift $ putState s
 
+onDone :: DccIO s ()
+onDone = DccIO $ do
+    onDone' <- asks onDoneFn
+    lift onDone'
+
 onAbort :: DccIO s ()
 onAbort = DccIO $ do
     onAbort' <- asks onAbortFn
     lift onAbort'
-
-disconnect  :: DccIO s ()
-disconnect = DccIO $ do
-    disconnect' <- asks disconnectFn
-    lift disconnect'
 
 getEnv :: DccIO s (Env s)
 getEnv = DccIO ask
@@ -87,8 +87,8 @@ data Env s = Env { remoteNick    :: !Nickname
                  , progress      :: ProgressBar -> FileOffset -> IO ()
                  , sendFn        :: IRC.UnicodeMessage -> IRC.StatefulIRC s ()
                  , putDccStateFn :: Status -> IRC.StatefulIRC s ()
-                 , onAbortFn     :: IRC.StatefulIRC s ()
-                 , disconnectFn  :: IRC.StatefulIRC s () }
+                 , onDoneFn      :: IRC.StatefulIRC s ()
+                 , onAbortFn     :: IRC.StatefulIRC s () }
 
 data Status = Requesting
             | Downloading !DccSend
@@ -145,7 +145,7 @@ download transferType offer = do
           putDccState (dlStatus transferType)
           downloadWithProgress (fileName offer) (size offer) conType transferType
           putDccState Done
-          disconnect
+          onDone
       Left err -> abort err
   where
     msg FromStart        = "No resumable file found, starting from zero...\n"
@@ -189,7 +189,6 @@ abort err = do
     liftIO $ outputConcurrent (err <> "\n")
     putDccState Aborting
     onAbort
-    disconnect
 
 sendCtcp :: CtcpCommand a => Nickname -> a -> DccIO s ()
 sendCtcp nick cmd = do
