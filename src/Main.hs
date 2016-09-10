@@ -131,13 +131,15 @@ main = withConcurrentOutput . displayConsoleRegions $ do
 -- TODO ZNC hooks
 mainWith :: Options -> IO (Either SomeException ())
 mainWith Options {..} = do
+    hooks <- initHooks
+
     outputConcurrent ( "Connecting to " ++ B.unpack network ++ " on port "
                      ++ show remotePort ++ " as " ++ T.unpack nickname ++ "…\n" )
     conn <- connectWith logger network (fromIntegral remotePort) 1
 
     -- Only wait for joining main channel. It doesn't matter that we might not have
     -- joined all additional channels when initiating a file transfer.
-    eventLoop <- async $ IRC.startStateful (connConfig conn) ircConfig initState
+    eventLoop <- async $ IRC.startStateful (connConfig conn hooks) (ircConfig hooks) initState
     waitCatch eventLoop
     -- TODO Handle errors
 
@@ -159,21 +161,21 @@ mainWith Options {..} = do
             }
         }
 
-    connConfig conn' = conn'
-        { IRC._onconnect    = IRC.defaultOnConnect    >> mapM_ onConnect    hooks
-        , IRC._ondisconnect = IRC.defaultOnDisconnect >> mapM_ onDisconnect hooks
+    connConfig conn' hooks' = conn'
+        { IRC._onconnect    = IRC.defaultOnConnect    >> mapM_ onConnect    hooks'
+        , IRC._ondisconnect = IRC.defaultOnDisconnect >> mapM_ onDisconnect hooks'
         }
 
-    ircConfig = (IRC.defaultIRCConf nickname)
+    ircConfig hooks' = (IRC.defaultIRCConf nickname)
         { IRC._username      = username
         , IRC._password      = password
         , IRC._channels      = CI.original <$> mainChannel : additionalChannels
         , IRC._eventHandlers = dispatcher xdccConfig
-                             : mconcat (events <$> hooks)
+                             : mconcat (events <$> hooks')
                             <> IRC.defaultEventHandlers
         }
 
-    hooks = [ZNC.autoConnectHooks | zncAutoConnect]
+    initHooks = sequence [ZNC.autoConnectHooks | zncAutoConnect]
 
     connectWith
         | useSecure = IRC.connectWithTLS'
