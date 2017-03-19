@@ -1,7 +1,4 @@
-resolver: lts-6.13
-packages:
-- '.'
+resolver: nightly-2017-03-19
 extra-deps:
-- irc-client-0.4.3.0
-- irc-dcc-2.0.0
-- safe-exceptions-0.1.4.0
+  - errors-2.2.0
+  - irc-dcc-2.0.1
