@@ -42,7 +42,7 @@ executable xdcc
                       , irc-dcc              >= 2.0.1    && < 2.1
                       , monad-control        >= 1.0.1.0  && < 1.1
                       , network              >= 2.6.2.1  && < 2.7
-                      , optparse-applicative >= 0.12.1.0 && < 0.14
+                      , optparse-applicative >= 0.12.1.0 && < 0.15
                       , path                 >= 0.5.7    && < 0.6
                       , random               == 1.1.*
                       , text                 >= 1.2.2.1  && < 1.3
